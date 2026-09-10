@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { locationsForYear } from '../data/territories';
 
 type Geometry = {
   type: 'Polygon' | 'MultiPolygon';
@@ -15,7 +16,11 @@ type FeatureCollection = { type: 'FeatureCollection'; features: Feature[] };
 
 type Props = {
   selectedName?: string;
+  selectedEntityId?: string;
+  year: number;
+  entityNames: Record<string, string>;
   onSelectCountry: (name: string) => void;
+  onSelectTerritory?: (entityId: string, locationName: string) => void;
   historicalLayerReady?: boolean;
 };
 
@@ -43,7 +48,15 @@ function geometryToPath(geometry: Geometry) {
     .join(' ');
 }
 
-export function WorldMap({ selectedName, onSelectCountry, historicalLayerReady = false }: Props) {
+export function WorldMap({
+  selectedName,
+  selectedEntityId,
+  year,
+  entityNames,
+  onSelectCountry,
+  onSelectTerritory,
+  historicalLayerReady = false,
+}: Props) {
   const [data, setData] = useState<FeatureCollection | null>(null);
   const [error, setError] = useState('');
   const [zoom, setZoom] = useState(1);
@@ -63,6 +76,7 @@ export function WorldMap({ selectedName, onSelectCountry, historicalLayerReady =
   }, []);
 
   const features = useMemo(() => data?.features ?? [], [data]);
+  const temporalLocations = useMemo(() => locationsForYear(year), [year]);
 
   function countryName(feature: Feature) {
     return feature.properties.name || feature.properties.ADMIN || feature.properties.NAME || 'Entidade';
@@ -81,7 +95,7 @@ export function WorldMap({ selectedName, onSelectCountry, historicalLayerReady =
       </div>
 
       {!historicalLayerReady && (
-        <div className="historical-status">Geografia real ativa • camada histórica temporal em construção</div>
+        <div className="historical-status">Geografia real ativa • locations temporais em integração • fronteiras políticas históricas completas pendentes</div>
       )}
 
       {error ? <div className="map-loading error">{error}</div> : !data ? <div className="map-loading">Carregando geografia mundial…</div> : (
@@ -124,6 +138,34 @@ export function WorldMap({ selectedName, onSelectCountry, historicalLayerReady =
                 </path>
               );
             })}
+
+            <g className="temporal-layer" aria-label={`Locations temporais de ${year}`}>
+              {temporalLocations.map((location) => {
+                const [x, y] = project([location.lon, location.lat]);
+                const active = location.ownerId === selectedEntityId;
+                const ownerName = location.ownerId ? (entityNames[location.ownerId] ?? location.ownerId) : 'Desconhecido';
+                return (
+                  <g
+                    key={location.id}
+                    className={active ? 'territory-marker active' : 'territory-marker'}
+                    transform={`translate(${x} ${y})`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name);
+                    }}
+                    onKeyDown={(event) => {
+                      if ((event.key === 'Enter' || event.key === ' ') && location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name);
+                    }}
+                  >
+                    <circle r={active ? 5.5 : 4} />
+                    <circle className="marker-ring" r={active ? 9 : 7} />
+                    <title>{location.name} • {ownerName} • confiança {location.confidence}</title>
+                  </g>
+                );
+              })}
+            </g>
           </g>
         </svg>
       )}
