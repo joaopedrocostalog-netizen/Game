@@ -53,7 +53,9 @@ function DiplomacyConsole({ entityId, year, allRuntimes }: { entityId: string; y
     const text = draft.trim();
     if (!text || !target) return;
     const reply = diplomaticReply(from, target, text, year);
-    setMessages((current) => [...current, { side: 'player', text }, { side: 'foreign', text: reply }].slice(-8));
+    const outgoing: ChatMessage = { side: 'player', text };
+    const incoming: ChatMessage = { side: 'foreign', text: reply };
+    setMessages((current) => [...current, outgoing, incoming].slice(-8));
     setDraft('');
   }
 
