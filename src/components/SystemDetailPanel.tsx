@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { profileFor } from '../data/entityProfiles';
 import { locationsForEntity } from '../data/territories';
+import { diplomaticReply, relationBetween } from '../data/diplomacy';
+import { scenarios } from '../data/scenarios';
 import type { EntityRuntime } from '../engine/simulation';
 import './system-detail.css';
 
@@ -12,7 +14,10 @@ type Props = {
   entityName: string;
   year: number;
   runtime?: EntityRuntime;
+  allRuntimes?: Record<string, EntityRuntime>;
 };
+
+type ChatMessage = { side: 'player' | 'foreign'; text: string };
 
 function Bars({ rows }: { rows: Array<{ name: string; share: number }> }) {
   return <div className="detail-bars">{rows.map((row) => <div className="detail-bar-row" key={row.name}>
@@ -34,7 +39,74 @@ function technologyBranches(year: number) {
   return ['Semicondutores', 'IA e computação', 'Biotecnologia', 'Energia avançada', 'Espaço', 'Robótica', 'Redes digitais'];
 }
 
-export function SystemDetailPanel({ system, entityId, entityName, year, runtime }: Props) {
+function DiplomacyConsole({ entityId, year, allRuntimes }: { entityId: string; year: number; allRuntimes?: Record<string, EntityRuntime> }) {
+  const scenario = scenarios.find((item) => item.year === year) ?? scenarios.reduce((best, item) => Math.abs(item.year - year) < Math.abs(best.year - year) ? item : best, scenarios[0]);
+  const from = scenario.entities.find((item) => item.id === entityId) ?? scenario.entities[0];
+  const targets = scenario.entities.filter((item) => item.id !== from.id);
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? '');
+  const [draft, setDraft] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const target = targets.find((item) => item.id === targetId) ?? targets[0];
+  const relation = target ? relationBetween(from, target, year) : null;
+
+  function send() {
+    const text = draft.trim();
+    if (!text || !target) return;
+    const reply = diplomaticReply(from, target, text, year);
+    setMessages((current) => [...current, { side: 'player', text }, { side: 'foreign', text: reply }].slice(-8));
+    setDraft('');
+  }
+
+  if (!target || !relation) return <div className="context-placeholder">Não há outra entidade conhecida disponível para contato neste cenário.</div>;
+
+  const foreignRuntime = allRuntimes?.[target.id];
+  return <div className="diplomacy-console">
+    <div className="context-kicker">Canal diplomático</div>
+    <select value={target.id} onChange={(event) => { setTargetId(event.target.value); setMessages([]); }}>
+      {targets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+    </select>
+    <div className="context-grid diplomacy-grid">
+      <div><span>Relação</span><strong>{relation.score}/100</strong></div>
+      <div><span>Confiança</span><strong>{relation.trust}/100</strong></div>
+      <div><span>Interesse comercial</span><strong>{relation.tradeInterest}/100</strong></div>
+      <div><span>Ameaça percebida</span><strong>{relation.threat}/100</strong></div>
+    </div>
+    <Tags label="Memória diplomática conhecida" items={relation.memory} />
+    {foreignRuntime && <p className="context-note">Os índices internos de {target.name} não são exibidos aqui: o canal diplomático respeita fog of war e não revela dados secretos do motor.</p>}
+    <div className="diplomatic-chat">
+      {messages.length === 0 ? <div className="chat-empty">Escreva uma proposta livre. A resposta será condicionada pela relação, interesses e contexto do alvo.</div> : messages.map((message, index) => <div key={index} className={`chat-bubble ${message.side}`}><span>{message.side === 'player' ? from.name : target.name}</span><p>{message.text}</p></div>)}
+    </div>
+    <div className="diplomatic-compose">
+      <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') send(); }} placeholder={`Fale com ${target.name}…`} />
+      <button type="button" onClick={send}>Enviar</button>
+    </div>
+    <p className="context-note">Nesta alpha, as relações explícitas são priors de gameplay e as demais são geradas deterministicamente. A versão final usará memória histórica + acontecimentos reais da partida.</p>
+  </div>;
+}
+
+function WorldRankings({ year, allRuntimes }: { year: number; allRuntimes?: Record<string, EntityRuntime> }) {
+  const scenario = scenarios.find((item) => item.year === year) ?? scenarios.reduce((best, item) => Math.abs(item.year - year) < Math.abs(best.year - year) ? item : best, scenarios[0]);
+  const rankings = useMemo(() => scenario.entities.map((item) => {
+    const runtime = allRuntimes?.[item.id];
+    const economy = runtime?.economyIndex ?? 50;
+    const military = runtime?.militaryReadiness ?? item.military;
+    const technology = runtime?.technology ?? item.technology;
+    const stability = runtime?.stability ?? item.stability;
+    const power = economy * .32 + military * .31 + technology * .25 + stability * .12;
+    return { item, economy, military, technology, power };
+  }).sort((a, b) => b.power - a.power), [scenario, allRuntimes]);
+
+  return <div className="world-ranking">
+    <div className="context-kicker">Ranking mundial conhecido • {year}</div>
+    <div className="ranking-head"><span>#</span><span>Entidade</span><span>Poder</span><span>Eco.</span><span>Mil.</span><span>Tec.</span></div>
+    {rankings.slice(0, 12).map((row, index) => <div className="ranking-row" key={row.item.id}>
+      <span>{index + 1}</span><strong>{row.item.name}</strong><b>{row.power.toFixed(1)}</b><span>{row.economy.toFixed(0)}</span><span>{row.military.toFixed(0)}</span><span>{row.technology.toFixed(0)}</span>
+    </div>)}
+    <p className="context-note">O índice de poder combina variáveis internas de gameplay. PIB, PIB per capita, renda e população comparável serão adicionados quando o dataset econômico histórico por cenário estiver validado; o jogo não inventará esses números.</p>
+  </div>;
+}
+
+export function SystemDetailPanel({ system, entityId, entityName, year, runtime, allRuntimes }: Props) {
   const profile = profileFor(entityId);
   const locations = locationsForEntity(entityId, year);
 
@@ -108,15 +180,14 @@ export function SystemDetailPanel({ system, entityId, entityName, year, runtime 
     </div>;
   }
 
-  if (system === 'Diplomacia' && runtime) {
+  if (system === 'Diplomacia') {
     return <div className="context-panel">
-      <div className="context-kicker">Capacidade diplomática</div>
-      <Bars rows={[
+      {runtime && <Bars rows={[
         { name: 'Peso econômico', share: runtime.economyIndex },
         { name: 'Peso militar', share: runtime.militaryReadiness },
         { name: 'Estabilidade interna', share: runtime.stability },
-      ]} />
-      <p className="context-note">Relações bilaterais, memória diplomática, tratados e conversas entre entidades serão armazenados separadamente destes índices materiais.</p>
+      ]} />}
+      <DiplomacyConsole entityId={entityId} year={year} allRuntimes={allRuntimes} />
     </div>;
   }
 
@@ -132,15 +203,17 @@ export function SystemDetailPanel({ system, entityId, entityName, year, runtime 
     </div>;
   }
 
-  if (system === 'Estatísticas' && runtime) {
-    const rows = [
-      { name: 'Economia', share: runtime.economyIndex },
-      { name: 'População', share: runtime.populationIndex },
-      { name: 'Prontidão militar', share: runtime.militaryReadiness },
-      { name: 'Tecnologia', share: runtime.technology },
-      { name: 'Estabilidade', share: runtime.stability },
-    ];
-    return <div className="context-panel"><div className="context-kicker">Índices comparáveis da simulação</div><Bars rows={rows} /><p className="context-note">São índices internos de gameplay, não equivalem automaticamente a PIB, renda, efetivo ou outras medidas históricas reais.</p></div>;
+  if (system === 'Estatísticas') {
+    return <div className="context-panel">
+      {runtime && <><div className="context-kicker">Índices da entidade ativa</div><Bars rows={[
+        { name: 'Economia', share: runtime.economyIndex },
+        { name: 'População', share: runtime.populationIndex },
+        { name: 'Prontidão militar', share: runtime.militaryReadiness },
+        { name: 'Tecnologia', share: runtime.technology },
+        { name: 'Estabilidade', share: runtime.stability },
+      ]} /></>}
+      <WorldRankings year={year} allRuntimes={allRuntimes} />
+    </div>;
   }
 
   return <div className="context-placeholder">O painel avançado de {system.toLowerCase()} continuará sendo aprofundado nas próximas versões.</div>;
