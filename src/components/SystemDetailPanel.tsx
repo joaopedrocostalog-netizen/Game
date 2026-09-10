@@ -3,7 +3,7 @@ import { profileFor } from '../data/entityProfiles';
 import { locationsForEntity } from '../data/territories';
 import { diplomaticReply, relationBetween } from '../data/diplomacy';
 import { scenarios } from '../data/scenarios';
-import type { EntityRuntime } from '../engine/simulation';
+import { pairKey, type DiplomaticRelation, type EntityRuntime, type Treaty } from '../engine/simulation';
 import './system-detail.css';
 
 type SystemName = 'Economia' | 'População' | 'Política' | 'Militar' | 'Diplomacia' | 'Inteligência' | 'Tecnologia' | 'Estatísticas';
@@ -15,6 +15,9 @@ type Props = {
   year: number;
   runtime?: EntityRuntime;
   allRuntimes?: Record<string, EntityRuntime>;
+  diplomacy?: Record<string, DiplomaticRelation>;
+  treaties?: Treaty[];
+  onDiplomaticAction?: (targetId: string, message: string) => void;
 };
 
 type ChatMessage = { side: 'player' | 'foreign'; text: string };
@@ -39,7 +42,21 @@ function technologyBranches(year: number) {
   return ['Semicondutores', 'IA e computação', 'Biotecnologia', 'Energia avançada', 'Espaço', 'Robótica', 'Redes digitais'];
 }
 
-function DiplomacyConsole({ entityId, year, allRuntimes }: { entityId: string; year: number; allRuntimes?: Record<string, EntityRuntime> }) {
+function DiplomacyConsole({
+  entityId,
+  year,
+  allRuntimes,
+  diplomacy,
+  treaties = [],
+  onDiplomaticAction,
+}: {
+  entityId: string;
+  year: number;
+  allRuntimes?: Record<string, EntityRuntime>;
+  diplomacy?: Record<string, DiplomaticRelation>;
+  treaties?: Treaty[];
+  onDiplomaticAction?: (targetId: string, message: string) => void;
+}) {
   const scenario = scenarios.find((item) => item.year === year) ?? scenarios.reduce((best, item) => Math.abs(item.year - year) < Math.abs(best.year - year) ? item : best, scenarios[0]);
   const from = scenario.entities.find((item) => item.id === entityId) ?? scenario.entities[0];
   const targets = scenario.entities.filter((item) => item.id !== from.id);
@@ -47,15 +64,19 @@ function DiplomacyConsole({ entityId, year, allRuntimes }: { entityId: string; y
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const target = targets.find((item) => item.id === targetId) ?? targets[0];
-  const relation = target ? relationBetween(from, target, year) : null;
+  const relation = target ? (diplomacy?.[pairKey(from.id, target.id)] ?? relationBetween(from, target, year)) : null;
+  const activeTreaties = target ? treaties.filter((item) => item.active && pairKey(...item.parties) === pairKey(from.id, target.id)) : [];
 
   function send() {
     const text = draft.trim();
     if (!text || !target) return;
     const reply = diplomaticReply(from, target, text, year);
-    const outgoing: ChatMessage = { side: 'player', text };
-    const incoming: ChatMessage = { side: 'foreign', text: reply };
-    setMessages((current) => [...current, outgoing, incoming].slice(-8));
+    const nextMessages: ChatMessage[] = [
+      { side: 'player', text },
+      { side: 'foreign', text: reply },
+    ];
+    setMessages((current) => [...current, ...nextMessages].slice(-8));
+    onDiplomaticAction?.(target.id, text);
     setDraft('');
   }
 
@@ -63,26 +84,27 @@ function DiplomacyConsole({ entityId, year, allRuntimes }: { entityId: string; y
 
   const foreignRuntime = allRuntimes?.[target.id];
   return <div className="diplomacy-console">
-    <div className="context-kicker">Canal diplomático</div>
+    <div className="context-kicker">Canal diplomático persistente</div>
     <select value={target.id} onChange={(event) => { setTargetId(event.target.value); setMessages([]); }}>
       {targets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
     </select>
     <div className="context-grid diplomacy-grid">
-      <div><span>Relação</span><strong>{relation.score}/100</strong></div>
-      <div><span>Confiança</span><strong>{relation.trust}/100</strong></div>
-      <div><span>Interesse comercial</span><strong>{relation.tradeInterest}/100</strong></div>
-      <div><span>Ameaça percebida</span><strong>{relation.threat}/100</strong></div>
+      <div><span>Relação</span><strong>{relation.score.toFixed(0)}/100</strong></div>
+      <div><span>Confiança</span><strong>{relation.trust.toFixed(0)}/100</strong></div>
+      <div><span>Interesse comercial</span><strong>{relation.tradeInterest.toFixed(0)}/100</strong></div>
+      <div><span>Ameaça percebida</span><strong>{relation.threat.toFixed(0)}/100</strong></div>
     </div>
-    <Tags label="Memória diplomática conhecida" items={relation.memory} />
-    {foreignRuntime && <p className="context-note">Os índices internos de {target.name} não são exibidos aqui: o canal diplomático respeita fog of war e não revela dados secretos do motor.</p>}
+    <Tags label="Memória diplomática" items={relation.memory.slice(0, 5)} />
+    <Tags label="Tratados ativos" items={activeTreaties.length ? activeTreaties.map((item) => item.type === 'trade' ? 'Acordo comercial' : item.type === 'alliance' ? 'Aliança' : 'Cooperação tecnológica') : ['Nenhum tratado bilateral ativo']} />
+    {foreignRuntime && <p className="context-note">Os índices internos de {target.name} continuam ocultos: a diplomacia respeita fog of war e revela apenas indicadores que seu Estado razoavelmente conheceria.</p>}
     <div className="diplomatic-chat">
-      {messages.length === 0 ? <div className="chat-empty">Escreva uma proposta livre. A resposta será condicionada pela relação, interesses e contexto do alvo.</div> : messages.map((message, index) => <div key={index} className={`chat-bubble ${message.side}`}><span>{message.side === 'player' ? from.name : target.name}</span><p>{message.text}</p></div>)}
+      {messages.length === 0 ? <div className="chat-empty">Escreva uma proposta livre. A negociação agora pode alterar relação, confiança, ameaça, memória e criar tratados reais na campanha.</div> : messages.map((message, index) => <div key={index} className={`chat-bubble ${message.side}`}><span>{message.side === 'player' ? from.name : target.name}</span><p>{message.text}</p></div>)}
     </div>
     <div className="diplomatic-compose">
       <input value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') send(); }} placeholder={`Fale com ${target.name}…`} />
       <button type="button" onClick={send}>Enviar</button>
     </div>
-    <p className="context-note">Nesta alpha, as relações explícitas são priors de gameplay e as demais são geradas deterministicamente. A versão final usará memória histórica + acontecimentos reais da partida.</p>
+    <p className="context-note">Acordos comerciais, alianças e cooperação tecnológica podem ser aceitos ou recusados conforme relação e confiança. Ultimatos pioram a memória bilateral e aumentam a ameaça percebida.</p>
   </div>;
 }
 
@@ -108,7 +130,7 @@ function WorldRankings({ year, allRuntimes }: { year: number; allRuntimes?: Reco
   </div>;
 }
 
-export function SystemDetailPanel({ system, entityId, entityName, year, runtime, allRuntimes }: Props) {
+export function SystemDetailPanel({ system, entityId, entityName, year, runtime, allRuntimes, diplomacy, treaties, onDiplomaticAction }: Props) {
   const profile = profileFor(entityId);
   const locations = locationsForEntity(entityId, year);
 
@@ -189,7 +211,7 @@ export function SystemDetailPanel({ system, entityId, entityName, year, runtime,
         { name: 'Peso militar', share: runtime.militaryReadiness },
         { name: 'Estabilidade interna', share: runtime.stability },
       ]} />}
-      <DiplomacyConsole entityId={entityId} year={year} allRuntimes={allRuntimes} />
+      <DiplomacyConsole entityId={entityId} year={year} allRuntimes={allRuntimes} diplomacy={diplomacy} treaties={treaties} onDiplomaticAction={onDiplomaticAction} />
     </div>;
   }
 
