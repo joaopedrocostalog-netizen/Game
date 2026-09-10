@@ -1,0 +1,8 @@
+.temporal-layer{pointer-events:none}
+.territory-marker{pointer-events:auto;cursor:pointer;outline:none}
+.territory-marker>circle:first-child{fill:#d7dde5;stroke:#111820;stroke-width:1.2;vector-effect:non-scaling-stroke;transition:r .14s ease,fill .14s ease}
+.territory-marker .marker-ring{fill:none;stroke:#d7dde5;stroke-width:.8;opacity:.28;vector-effect:non-scaling-stroke;transition:opacity .14s ease,r .14s ease}
+.territory-marker:hover>circle:first-child,.territory-marker:focus-visible>circle:first-child{fill:#ffffff}
+.territory-marker:hover .marker-ring,.territory-marker:focus-visible .marker-ring{opacity:.65}
+.territory-marker.active>circle:first-child{fill:#d92f43;stroke:#f5b4bd}
+.territory-marker.active .marker-ring{stroke:#d92f43;opacity:.72}
