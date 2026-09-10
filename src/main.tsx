@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, Settings2, Shield, Sparkles, Swords, TrendingUp, Users, BarChart3, Eye } from 'lucide-react';
+import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, Settings2, Shield, Sparkles, Swords, TrendingUp, Users, BarChart3, Eye, ScrollText, Activity } from 'lucide-react';
 import { WorldMap } from './components/WorldMap';
 import { scenarios, type ScenarioEntity } from './data/scenarios';
+import { applyPlayerDirective, createInitialRuntime, simulateDays, type GameDate, type SimulationState } from './engine/simulation';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
 type UiMode = 'Simples' | 'Avançada';
 type SystemName = 'Economia' | 'População' | 'Política' | 'Militar' | 'Diplomacia' | 'Inteligência' | 'Tecnologia' | 'Estatísticas';
-type GameDate = { year: number; month: number; day: number };
 
 const systemInfo: Record<SystemName, string> = {
   Economia: 'Produção, mercados, comércio, orçamento, trabalho, infraestrutura e cadeias produtivas adequadas à época.',
@@ -20,12 +20,6 @@ const systemInfo: Record<SystemName, string> = {
   Tecnologia: 'Conhecimento, difusão, adoção, capacidade local, pesquisa, contato exterior e catch-up tecnológico.',
   Estatísticas: 'Gráficos nacionais, comparações históricas e rankings mundiais limitados à informação conhecida pelo Estado.',
 };
-
-function addDays(date: GameDate, days: number): GameDate {
-  const js = new Date(Date.UTC(date.year, date.month - 1, date.day));
-  js.setUTCDate(js.getUTCDate() + days);
-  return { year: js.getUTCFullYear(), month: js.getUTCMonth() + 1, day: js.getUTCDate() };
-}
 
 function formatDate(date: GameDate) {
   const months = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
@@ -48,6 +42,10 @@ function genericEntity(name: string): ScenarioEntity {
   };
 }
 
+function makeSimulation(year: number, entities: ScenarioEntity[]) {
+  return createInitialRuntime({ year, month: 1, day: 1 }, entities);
+}
+
 function App() {
   const [scenarioId, setScenarioId] = useState('2026');
   const scenario = useMemo(() => scenarios.find((item) => item.id === scenarioId) ?? scenarios[0], [scenarioId]);
@@ -57,17 +55,20 @@ function App() {
   const [uiMode, setUiMode] = useState<UiMode>('Simples');
   const [activeSystem, setActiveSystem] = useState<SystemName>('Economia');
   const [speed, setSpeed] = useState(0);
-  const [date, setDate] = useState<GameDate>({ year: 2026, month: 1, day: 1 });
+  const [simulation, setSimulation] = useState<SimulationState>(() => makeSimulation(scenarios[0].year, scenarios[0].entities));
   const [command, setCommand] = useState('');
   const [advisorText, setAdvisorText] = useState('Selecione uma entidade, consulte um sistema ou dê uma ordem. O Conselheiro só usará informações disponíveis ao seu Estado.');
 
   const seededEntity = useMemo(() => scenario.entities.find((item) => item.id === selectedId), [scenario, selectedId]);
   const entity = mapSelection ?? seededEntity ?? scenario.entities[0];
-  const shownDate = formatDate(date);
+  const runtime = simulation.entities[entity.id];
+  const shownDate = formatDate(simulation.date);
 
   useEffect(() => {
     if (speed === 0) return;
-    const interval = window.setInterval(() => setDate((value) => addDays(value, 1)), Math.max(130, 1100 / speed));
+    const interval = window.setInterval(() => {
+      setSimulation((state) => simulateDays(state, 1));
+    }, Math.max(100, 900 / speed));
     return () => window.clearInterval(interval);
   }, [speed]);
 
@@ -76,19 +77,19 @@ function App() {
     setScenarioId(next.id);
     setSelectedId(next.entities[0].id);
     setMapSelection(null);
-    setDate({ year: next.year, month: 1, day: 1 });
+    setSimulation(makeSimulation(next.year, next.entities));
     setSpeed(0);
-    setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'A base política histórica completa será conectada ao motor territorial temporal.'}`);
+    setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'A camada política histórica completa permanece separada da geografia-base até o dataset temporal ser integrado.'}`);
   }
 
   function advanceDays(days: number, label: string) {
-    setDate((value) => addDays(value, days));
-    setAdvisorText(`Tempo avançado em ${label}. Os sistemas serão recalculados por ticks separados conforme o motor de simulação for sendo conectado.`);
+    setSimulation((state) => simulateDays(state, days));
+    setAdvisorText(`Tempo avançado em ${label}. O motor executou os ticks correspondentes sem depender da animação da interface.`);
   }
 
   function handleMapCountry(name: string) {
     if (!scenario.historicalLayerReady) {
-      setAdvisorText(`Você selecionou a área correspondente a ${name} na geografia-base. No cenário de ${scenario.year}, o limite moderno não representa necessariamente a entidade histórica; a seleção política ficará vinculada às locations temporais quando esse dataset for integrado.`);
+      setAdvisorText(`Você selecionou a área correspondente a ${name} na geografia-base. Em ${scenario.year}, fronteiras modernas não serão tratadas como fronteiras históricas. O motor territorial temporal substituirá essa seleção quando o dataset estiver disponível.`);
       return;
     }
     const known = scenario.entities.find((item) => item.name.toLowerCase() === name.toLowerCase());
@@ -102,11 +103,22 @@ function App() {
     setAdvisorText(`${item.name} selecionado. Diferencial inicial: ${item.specialty}.`);
   }
 
+  function selectSystem(name: SystemName) {
+    setActiveSystem(name);
+    setAdvisorText(`${name} aberto para ${entity.name}. ${systemInfo[name]}`);
+  }
+
   function submitCommand(event: React.FormEvent) {
     event.preventDefault();
     const trimmed = command.trim();
     if (!trimmed) return;
-    setAdvisorText(`Ordem recebida para ${entity.name}: “${trimmed}”. A intenção foi registrada. O próximo estágio do motor transformará comandos em ações contextuais válidas para ${date.year}, respeitando recursos, instituições, tecnologia e conhecimento disponível.`);
+
+    if (runtime) {
+      setSimulation((state) => applyPlayerDirective(state, entity.id, trimmed));
+      setAdvisorText(`Diretriz aplicada ao motor de ${entity.name}: “${trimmed}”. Ela gerou efeitos iniciais coerentes com a categoria detectada e continuará sujeita aos ticks, recursos e sistemas que serão aprofundados.`);
+    } else {
+      setAdvisorText(`A ordem “${trimmed}” foi registrada, mas ${entity.name} ainda não possui perfil de simulação conectado. Nenhum valor foi alterado artificialmente.`);
+    }
     setCommand('');
   }
 
@@ -126,7 +138,7 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark"><Globe2 size={19} /></div>
-          <div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.2</span></div>
+          <div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.3</span></div>
         </div>
 
         <div className="time-center">
@@ -153,25 +165,27 @@ function App() {
 
           <div className="stat-grid">
             <Stat label="População" value={entity.population} />
-            <Stat label="Tesouro" value={entity.treasury} />
-            <Stat label="Estabilidade" value={`${entity.stability}%`} />
-            <Stat label="Tecnologia" value={`${entity.technology}`} />
+            <Stat label="Tesouro" value={runtime ? `${runtime.treasuryIndex.toFixed(1)} idx` : entity.treasury} />
+            <Stat label="Estabilidade" value={`${(runtime?.stability ?? entity.stability).toFixed(1)}%`} />
+            <Stat label="Tecnologia" value={`${(runtime?.technology ?? entity.technology).toFixed(1)}`} />
           </div>
 
           <div className="section-title">Sistemas</div>
           <nav className="side-nav">
             {systems.map((item) => (
-              <button key={item.name} className={activeSystem === item.name ? 'nav-active' : ''} onClick={() => setActiveSystem(item.name)}>
+              <button key={item.name} className={activeSystem === item.name ? 'nav-active' : ''} onClick={() => selectSystem(item.name)}>
                 {item.icon} {item.name} <ChevronRight size={14}/>
               </button>
             ))}
           </nav>
 
           {uiMode === 'Avançada' && <div className="advanced-box">
-            <div className="section-title">Visão avançada</div>
-            <Metric label="Poder militar" value={entity.military} />
-            <Metric label="Estabilidade" value={entity.stability} />
-            <Metric label="Tecnologia" value={entity.technology} />
+            <div className="section-title">Estado da simulação</div>
+            <Metric label="Economia" value={runtime?.economyIndex ?? 50} />
+            <Metric label="Prontidão militar" value={runtime?.militaryReadiness ?? entity.military} />
+            <Metric label="Estabilidade" value={runtime?.stability ?? entity.stability} />
+            <Metric label="Tecnologia" value={runtime?.technology ?? entity.technology} />
+            <Metric label="Tesouro" value={runtime?.treasuryIndex ?? 50} />
             <div className="micro-copy">Cultura/identidade: {entity.culture}</div>
           </div>}
         </aside>
@@ -194,7 +208,7 @@ function App() {
             <button onClick={() => advanceDays(7, '1 semana')}>+1 semana</button>
             <button onClick={() => advanceDays(30, '1 mês')}>+1 mês</button>
             <button onClick={() => advanceDays(365, '1 ano')}>+1 ano</button>
-            <span>{scenario.subtitle} • {speed === 0 ? 'Pausado' : `${speed}×`}</span>
+            <span>{scenario.subtitle} • {speed === 0 ? 'Pausado' : `${speed}×`} • tick #{simulation.elapsedDays}</span>
           </div>
         </section>
 
@@ -206,19 +220,24 @@ function App() {
           <div className="system-focus">
             <strong>{activeSystem} de {entity.name}</strong>
             <p>{systemInfo[activeSystem]}</p>
+            {runtime && <SystemSnapshot activeSystem={activeSystem} runtime={runtime} />}
             {uiMode === 'Avançada' && <div className="detail-grid">
-              <span><b>Época</b>{date.year}</span>
+              <span><b>Época</b>{simulation.date.year}</span>
               <span><b>Modo</b>Avançado</span>
-              <span><b>Confiança</b>Parcial</span>
-              <span><b>Tick</b>Contextual</span>
+              <span><b>Confiança</b>{scenario.historicalLayerReady ? 'Alta/variável' : 'Histórica parcial'}</span>
+              <span><b>Tick</b>{simulation.elapsedDays}</span>
             </div>}
           </div>
 
-          <div className="section-title">Situação mundial</div>
-          <div className="event-list">
-            <Event tone="neutral" title="Motor territorial" text="Geografia real já está separada das futuras fronteiras políticas temporais." />
-            <Event tone="warning" title="Cobertura histórica" text="A base de todas as entidades por época será adicionada por datasets progressivos, sem reduzir o objetivo de cobertura mundial completa." />
-            <Event tone="positive" title="Simulação" text="Tempo contínuo e avanço manual já compartilham o mesmo relógio da partida." />
+          <div className="section-title history-title"><ScrollText size={12}/> História recente</div>
+          <div className="history-feed">
+            {simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 5).map((item) => (
+              <div className="history-item" key={item.id}>
+                <span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span>
+                <strong>{item.title}</strong>
+                <p>{item.text}</p>
+              </div>
+            ))}
           </div>
         </aside>
       </main>
@@ -232,8 +251,22 @@ function App() {
   );
 }
 
+function SystemSnapshot({ activeSystem, runtime }: { activeSystem: SystemName; runtime: SimulationState['entities'][string] }) {
+  const values: Record<SystemName, Array<[string, number]>> = {
+    Economia: [['Atividade', runtime.economyIndex], ['Tesouro', runtime.treasuryIndex], ['Estabilidade econômica', (runtime.economyIndex + runtime.stability) / 2]],
+    População: [['Bem-estar demográfico', runtime.populationIndex], ['Estabilidade social', runtime.stability], ['Capacidade econômica', runtime.economyIndex]],
+    Política: [['Estabilidade', runtime.stability], ['Capacidade fiscal', runtime.treasuryIndex], ['Pressão econômica', runtime.economyIndex]],
+    Militar: [['Prontidão', runtime.militaryReadiness], ['Sustentação fiscal', runtime.treasuryIndex], ['Base tecnológica', runtime.technology]],
+    Diplomacia: [['Capacidade material', (runtime.economyIndex + runtime.militaryReadiness) / 2], ['Estabilidade', runtime.stability], ['Tecnologia', runtime.technology]],
+    Inteligência: [['Capacidade tecnológica', runtime.technology], ['Recursos', runtime.treasuryIndex], ['Estabilidade interna', runtime.stability]],
+    Tecnologia: [['Conhecimento', runtime.technology], ['Base econômica', runtime.economyIndex], ['Capacidade fiscal', runtime.treasuryIndex]],
+    Estatísticas: [['Economia', runtime.economyIndex], ['Militar', runtime.militaryReadiness], ['Tecnologia', runtime.technology]],
+  };
+
+  return <div className="snapshot-list">{values[activeSystem].map(([label, value]) => <div key={label}><span>{label}</span><b>{value.toFixed(1)}</b><i><em style={{ width: `${Math.max(2, Math.min(100, value))}%` }}/></i></div>)}</div>;
+}
+
 function Stat({ label, value }: { label: string; value: string }) { return <div className="stat"><span>{label}</span><strong>{value}</strong></div>; }
-function Metric({ label, value }: { label: string; value: number }) { return <div className="metric"><div><span>{label}</span><strong>{value}</strong></div><div className="bar"><i style={{ width: `${value}%` }} /></div></div>; }
-function Event({ title, text, tone }: { title: string; text: string; tone: 'neutral' | 'warning' | 'positive' }) { return <div className={`event ${tone}`}><span className="event-dot"/><div><strong>{title}</strong><p>{text}</p></div></div>; }
+function Metric({ label, value }: { label: string; value: number }) { return <div className="metric"><div><span>{label}</span><strong>{value.toFixed(1)}</strong></div><div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div></div>; }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
