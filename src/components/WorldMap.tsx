@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { locationsForYear } from '../data/territories';
+import { areasForYear } from '../data/historicalAreas';
 import './world-map.css';
 
 type Geometry = {
@@ -40,6 +41,10 @@ function ringToPath(ring: number[][]) {
   }).join(' ') + ' Z';
 }
 
+function areaPath(polygon: Array<[number, number]>) {
+  return ringToPath(polygon.map(([lon, lat]) => [lon, lat]));
+}
+
 function geometryToPath(geometry: Geometry) {
   if (geometry.type === 'Polygon') {
     return (geometry.coordinates as number[][][]).map(ringToPath).join(' ');
@@ -47,6 +52,10 @@ function geometryToPath(geometry: Geometry) {
   return (geometry.coordinates as number[][][][])
     .flatMap((polygon) => polygon.map(ringToPath))
     .join(' ');
+}
+
+function colorIndex(id: string) {
+  return [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 8;
 }
 
 export function WorldMap({
@@ -79,6 +88,7 @@ export function WorldMap({
 
   const features = useMemo(() => data?.features ?? [], [data]);
   const temporalLocations = useMemo(() => locationsForYear(effectiveYear), [effectiveYear]);
+  const historicalAreas = useMemo(() => historicalLayerReady ? [] : areasForYear(effectiveYear), [effectiveYear, historicalLayerReady]);
 
   function countryName(feature: Feature) {
     return feature.properties.name || feature.properties.ADMIN || feature.properties.NAME || 'Entidade';
@@ -97,7 +107,7 @@ export function WorldMap({
       </div>
 
       {!historicalLayerReady && (
-        <div className="historical-status">Geografia real ativa • locations temporais em integração • fronteiras políticas históricas completas pendentes</div>
+        <div className="historical-status">Camada política histórica experimental • áreas esquemáticas + locations temporais • limites finais ainda serão pesquisados e vetorizados</div>
       )}
 
       {error ? <div className="map-loading error">{error}</div> : !data ? <div className="map-loading">Carregando geografia mundial…</div> : (
@@ -130,16 +140,40 @@ export function WorldMap({
                 <path
                   key={`${name}-${index}`}
                   d={geometryToPath(feature.geometry)}
-                  className={selected ? 'country-shape selected' : 'country-shape'}
-                  tabIndex={0}
+                  className={`${selected ? 'country-shape selected' : 'country-shape'} ${historicalLayerReady ? '' : 'geography-only'}`}
+                  tabIndex={historicalLayerReady ? 0 : -1}
                   aria-label={name}
-                  onClick={() => onSelectCountry(name)}
-                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelectCountry(name); }}
+                  onClick={() => { if (historicalLayerReady) onSelectCountry(name); }}
+                  onKeyDown={(event) => { if (historicalLayerReady && (event.key === 'Enter' || event.key === ' ')) onSelectCountry(name); }}
                 >
-                  <title>{name}</title>
+                  <title>{historicalLayerReady ? name : `${name} • geografia-base contemporânea, não fronteira histórica`}</title>
                 </path>
               );
             })}
+
+            {!historicalLayerReady && <g className="historical-area-layer" aria-label={`Áreas políticas esquemáticas de ${effectiveYear}`}>
+              {historicalAreas.map((area) => {
+                const active = area.entityId === selectedEntityId;
+                const ownerName = entityNames[area.entityId] ?? area.name;
+                return <path
+                  key={area.id}
+                  d={areaPath(area.polygon)}
+                  className={`historical-area color-${colorIndex(area.entityId)} ${active ? 'active' : ''} confidence-${area.confidence}`}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${ownerName}, ${area.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectTerritory?.(area.entityId, area.name);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') onSelectTerritory?.(area.entityId, area.name);
+                  }}
+                >
+                  <title>{ownerName} • {area.name} • confiança {area.confidence} • {area.note}</title>
+                </path>;
+              })}
+            </g>}
 
             <g className="temporal-layer" aria-label={`Locations temporais de ${effectiveYear}`}>
               {temporalLocations.map((location) => {
