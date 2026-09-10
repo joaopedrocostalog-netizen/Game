@@ -1,6 +1,7 @@
 import React from 'react';
 import { profileFor } from '../data/entityProfiles';
 import type { EntityRuntime } from '../engine/simulation';
+import './system-detail.css';
 
 type Props = {
   system: 'Economia' | 'População' | 'Política' | 'Militar' | 'Diplomacia' | 'Inteligência' | 'Tecnologia' | 'Estatísticas';
