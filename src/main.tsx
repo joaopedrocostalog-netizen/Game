@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, Settings2, Shield, Sparkles, Swords, TrendingUp, Users, BarChart3, Eye, ScrollText, Activity } from 'lucide-react';
+import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, Settings2, Shield, Sparkles, Swords, TrendingUp, Users, BarChart3, Eye, ScrollText } from 'lucide-react';
 import { WorldMap } from './components/WorldMap';
+import { SystemDetailPanel } from './components/SystemDetailPanel';
 import { scenarios, type ScenarioEntity } from './data/scenarios';
 import { applyPlayerDirective, createInitialRuntime, simulateDays, type GameDate, type SimulationState } from './engine/simulation';
 import './styles.css';
@@ -63,12 +64,11 @@ function App() {
   const entity = mapSelection ?? seededEntity ?? scenario.entities[0];
   const runtime = simulation.entities[entity.id];
   const shownDate = formatDate(simulation.date);
+  const entityNames = useMemo(() => Object.fromEntries(scenario.entities.map((item) => [item.id, item.name])), [scenario]);
 
   useEffect(() => {
     if (speed === 0) return;
-    const interval = window.setInterval(() => {
-      setSimulation((state) => simulateDays(state, 1));
-    }, Math.max(100, 900 / speed));
+    const interval = window.setInterval(() => setSimulation((state) => simulateDays(state, 1)), Math.max(100, 900 / speed));
     return () => window.clearInterval(interval);
   }, [speed]);
 
@@ -79,7 +79,7 @@ function App() {
     setMapSelection(null);
     setSimulation(makeSimulation(next.year, next.entities));
     setSpeed(0);
-    setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'A camada política histórica completa permanece separada da geografia-base até o dataset temporal ser integrado.'}`);
+    setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'Locations históricas já podem representar entidades do período; as fronteiras completas continuam sendo expandidas sem reutilizar limites modernos.'}`);
   }
 
   function advanceDays(days: number, label: string) {
@@ -89,12 +89,23 @@ function App() {
 
   function handleMapCountry(name: string) {
     if (!scenario.historicalLayerReady) {
-      setAdvisorText(`Você selecionou a área correspondente a ${name} na geografia-base. Em ${scenario.year}, fronteiras modernas não serão tratadas como fronteiras históricas. O motor territorial temporal substituirá essa seleção quando o dataset estiver disponível.`);
+      setAdvisorText(`A forma moderna de ${name} pertence apenas à geografia-base. Em ${scenario.year}, use os marcadores históricos temporais para selecionar entidades já integradas sem assumir fronteiras contemporâneas.`);
       return;
     }
     const known = scenario.entities.find((item) => item.name.toLowerCase() === name.toLowerCase());
     setMapSelection(known ?? genericEntity(name));
     if (known) setSelectedId(known.id);
+  }
+
+  function handleTerritory(entityId: string, locationName: string) {
+    const known = scenario.entities.find((item) => item.id === entityId);
+    if (!known) {
+      setAdvisorText(`${locationName} possui vínculo territorial registrado, mas a entidade proprietária ainda não tem perfil completo neste cenário.`);
+      return;
+    }
+    setSelectedId(known.id);
+    setMapSelection(null);
+    setAdvisorText(`${locationName} selecionada. O registro temporal associa esta location a ${known.name} em ${simulation.date.year}.`);
   }
 
   function selectEntity(item: ScenarioEntity) {
@@ -112,10 +123,9 @@ function App() {
     event.preventDefault();
     const trimmed = command.trim();
     if (!trimmed) return;
-
     if (runtime) {
       setSimulation((state) => applyPlayerDirective(state, entity.id, trimmed));
-      setAdvisorText(`Diretriz aplicada ao motor de ${entity.name}: “${trimmed}”. Ela gerou efeitos iniciais coerentes com a categoria detectada e continuará sujeita aos ticks, recursos e sistemas que serão aprofundados.`);
+      setAdvisorText(`Diretriz aplicada ao motor de ${entity.name}: “${trimmed}”. Ela gerou efeitos iniciais e continuará sujeita ao tempo, recursos, tecnologia, instituições e contexto da época.`);
     } else {
       setAdvisorText(`A ordem “${trimmed}” foi registrada, mas ${entity.name} ainda não possui perfil de simulação conectado. Nenhum valor foi alterado artificialmente.`);
     }
@@ -136,22 +146,15 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark"><Globe2 size={19} /></div>
-          <div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.3</span></div>
-        </div>
-
+        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.4</span></div></div>
         <div className="time-center">
           <button className={speed === 0 ? 'icon-button active' : 'icon-button'} onClick={() => setSpeed(0)} aria-label="Pausar"><Pause size={16} /></button>
           {[1, 2, 4, 8].map((value) => <button key={value} className={speed === value ? 'speed active' : 'speed'} onClick={() => setSpeed(value)}>{value}×</button>)}
           <div className="date-pill"><span>{shownDate.dayMonth}</span><strong>{shownDate.year}</strong></div>
           <button className="icon-button" onClick={() => advanceDays(30, '30 dias')} aria-label="Avançar 30 dias"><FastForward size={16} /></button>
         </div>
-
         <div className="top-actions">
-          <select className="scenario-select" value={scenarioId} onChange={(event) => changeScenario(event.target.value)} aria-label="Selecionar cenário">
-            {scenarios.map((item) => <option value={item.id} key={item.id}>{item.label} — {item.year}</option>)}
-          </select>
+          <select className="scenario-select" value={scenarioId} onChange={(event) => changeScenario(event.target.value)} aria-label="Selecionar cenário">{scenarios.map((item) => <option value={item.id} key={item.id}>{item.label} — {item.year}</option>)}</select>
           <button className="mode-toggle" onClick={() => setUiMode((mode) => mode === 'Simples' ? 'Avançada' : 'Simples')}><Settings2 size={15} /> {uiMode}</button>
         </div>
       </header>
@@ -162,23 +165,14 @@ function App() {
           <h1>{entity.name}</h1>
           <div className="entity-meta">{entity.type} • {entity.government}</div>
           <div className="specialty">{entity.specialty}</div>
-
           <div className="stat-grid">
             <Stat label="População" value={entity.population} />
             <Stat label="Tesouro" value={runtime ? `${runtime.treasuryIndex.toFixed(1)} idx` : entity.treasury} />
             <Stat label="Estabilidade" value={`${(runtime?.stability ?? entity.stability).toFixed(1)}%`} />
             <Stat label="Tecnologia" value={`${(runtime?.technology ?? entity.technology).toFixed(1)}`} />
           </div>
-
           <div className="section-title">Sistemas</div>
-          <nav className="side-nav">
-            {systems.map((item) => (
-              <button key={item.name} className={activeSystem === item.name ? 'nav-active' : ''} onClick={() => selectSystem(item.name)}>
-                {item.icon} {item.name} <ChevronRight size={14}/>
-              </button>
-            ))}
-          </nav>
-
+          <nav className="side-nav">{systems.map((item) => <button key={item.name} className={activeSystem === item.name ? 'nav-active' : ''} onClick={() => selectSystem(item.name)}>{item.icon} {item.name} <ChevronRight size={14}/></button>)}</nav>
           {uiMode === 'Avançada' && <div className="advanced-box">
             <div className="section-title">Estado da simulação</div>
             <Metric label="Economia" value={runtime?.economyIndex ?? 50} />
@@ -191,23 +185,22 @@ function App() {
         </aside>
 
         <section className="map-stage">
-          <div className="map-toolbar panel-floating">
-            {(['Político', 'Economia', 'População', 'Militar', 'Tecnologia'] as MapMode[]).map((mode) => <button key={mode} onClick={() => setMapMode(mode)} className={mapMode === mode ? 'active' : ''}>{mode}</button>)}
-          </div>
-
+          <div className="map-toolbar panel-floating">{(['Político', 'Economia', 'População', 'Militar', 'Tecnologia'] as MapMode[]).map((mode) => <button key={mode} onClick={() => setMapMode(mode)} className={mapMode === mode ? 'active' : ''}>{mode}</button>)}</div>
           <div className="world-map panel">
             <div className="world-title"><Map size={16}/> Mapa mundial • {mapMode}</div>
-            <WorldMap selectedName={scenario.historicalLayerReady ? entity.name : undefined} onSelectCountry={handleMapCountry} historicalLayerReady={scenario.historicalLayerReady} />
-            <div className="entity-chips">
-              {scenario.entities.map((item) => <button key={item.id} className={entity.id === item.id ? 'country-chip selected' : 'country-chip'} onClick={() => selectEntity(item)}>{item.name}</button>)}
-            </div>
+            <WorldMap
+              selectedName={scenario.historicalLayerReady ? entity.name : undefined}
+              selectedEntityId={entity.id}
+              year={simulation.date.year}
+              entityNames={entityNames}
+              onSelectCountry={handleMapCountry}
+              onSelectTerritory={handleTerritory}
+              historicalLayerReady={scenario.historicalLayerReady}
+            />
+            <div className="entity-chips">{scenario.entities.map((item) => <button key={item.id} className={entity.id === item.id ? 'country-chip selected' : 'country-chip'} onClick={() => selectEntity(item)}>{item.name}</button>)}</div>
           </div>
-
           <div className="advance-bar panel">
-            <button onClick={() => advanceDays(1, '1 dia')}>+1 dia</button>
-            <button onClick={() => advanceDays(7, '1 semana')}>+1 semana</button>
-            <button onClick={() => advanceDays(30, '1 mês')}>+1 mês</button>
-            <button onClick={() => advanceDays(365, '1 ano')}>+1 ano</button>
+            <button onClick={() => advanceDays(1, '1 dia')}>+1 dia</button><button onClick={() => advanceDays(7, '1 semana')}>+1 semana</button><button onClick={() => advanceDays(30, '1 mês')}>+1 mês</button><button onClick={() => advanceDays(365, '1 ano')}>+1 ano</button>
             <span>{scenario.subtitle} • {speed === 0 ? 'Pausado' : `${speed}×`} • tick #{simulation.elapsedDays}</span>
           </div>
         </section>
@@ -215,38 +208,20 @@ function App() {
         <aside className="right-panel panel">
           <div className="advisor-heading"><Brain size={17}/><div><span>CONSELHEIRO IA</span><strong>Conselho de Estado</strong></div></div>
           <div className="advisor-card"><p>{advisorText}</p><span className="confidence">Conhecimento limitado ao que o Estado poderia razoavelmente saber.</span></div>
-
           <div className="section-title">{activeSystem}</div>
           <div className="system-focus">
             <strong>{activeSystem} de {entity.name}</strong>
             <p>{systemInfo[activeSystem]}</p>
             {runtime && <SystemSnapshot activeSystem={activeSystem} runtime={runtime} />}
-            {uiMode === 'Avançada' && <div className="detail-grid">
-              <span><b>Época</b>{simulation.date.year}</span>
-              <span><b>Modo</b>Avançado</span>
-              <span><b>Confiança</b>{scenario.historicalLayerReady ? 'Alta/variável' : 'Histórica parcial'}</span>
-              <span><b>Tick</b>{simulation.elapsedDays}</span>
-            </div>}
+            {uiMode === 'Avançada' && <SystemDetailPanel system={activeSystem} entityId={entity.id} entityName={entity.name} year={simulation.date.year} runtime={runtime} />}
+            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Confiança</b>{scenario.historicalLayerReady ? 'Alta/variável' : 'Histórica parcial'}</span><span><b>Tick</b>{simulation.elapsedDays}</span></div>}
           </div>
-
           <div className="section-title history-title"><ScrollText size={12}/> História recente</div>
-          <div className="history-feed">
-            {simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 5).map((item) => (
-              <div className="history-item" key={item.id}>
-                <span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span>
-                <strong>{item.title}</strong>
-                <p>{item.text}</p>
-              </div>
-            ))}
-          </div>
+          <div className="history-feed">{simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 5).map((item) => <div className="history-item" key={item.id}><span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span><strong>{item.title}</strong><p>{item.text}</p></div>)}</div>
         </aside>
       </main>
 
-      <form className="command-bar" onSubmit={submitCommand}>
-        <div className="command-label"><Brain size={18}/><span>Conselheiro</span></div>
-        <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder={`Dê uma ordem para ${entity.name} ou pergunte sobre o mundo…`} />
-        <button type="submit"><Play size={16}/> Executar</button>
-      </form>
+      <form className="command-bar" onSubmit={submitCommand}><div className="command-label"><Brain size={18}/><span>Conselheiro</span></div><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder={`Dê uma ordem para ${entity.name} ou pergunte sobre o mundo…`} /><button type="submit"><Play size={16}/> Executar</button></form>
     </div>
   );
 }
@@ -262,7 +237,6 @@ function SystemSnapshot({ activeSystem, runtime }: { activeSystem: SystemName; r
     Tecnologia: [['Conhecimento', runtime.technology], ['Base econômica', runtime.economyIndex], ['Capacidade fiscal', runtime.treasuryIndex]],
     Estatísticas: [['Economia', runtime.economyIndex], ['Militar', runtime.militaryReadiness], ['Tecnologia', runtime.technology]],
   };
-
   return <div className="snapshot-list">{values[activeSystem].map(([label, value]) => <div key={label}><span>{label}</span><b>{value.toFixed(1)}</b><i><em style={{ width: `${Math.max(2, Math.min(100, value))}%` }}/></i></div>)}</div>;
 }
 
