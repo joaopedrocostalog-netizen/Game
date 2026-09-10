@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { locationsForYear } from '../data/territories';
+import './world-map.css';
 
 type Geometry = {
   type: 'Polygon' | 'MultiPolygon';
