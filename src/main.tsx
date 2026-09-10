@@ -4,7 +4,7 @@ import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, S
 import { WorldMap } from './components/WorldMap';
 import { SystemDetailPanel } from './components/SystemDetailPanel';
 import { scenarios, type ScenarioEntity } from './data/scenarios';
-import { applyPlayerDirective, createInitialRuntime, simulateDays, type GameDate, type SimulationState } from './engine/simulation';
+import { applyDiplomaticAction, applyPlayerDirective, createInitialRuntime, simulateDays, type GameDate, type SimulationState } from './engine/simulation';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
@@ -119,6 +119,12 @@ function App() {
     setAdvisorText(`${name} aberto para ${entity.name}. ${systemInfo[name]}`);
   }
 
+  function handleDiplomaticAction(targetId: string, message: string) {
+    const target = scenario.entities.find((item) => item.id === targetId);
+    setSimulation((state) => applyDiplomaticAction(state, entity.id, targetId, message));
+    setAdvisorText(`Mensagem diplomática enviada de ${entity.name} para ${target?.name ?? targetId}. A negociação agora altera relação, confiança, memória e tratados da campanha.`);
+  }
+
   function submitCommand(event: React.FormEvent) {
     event.preventDefault();
     const trimmed = command.trim();
@@ -146,7 +152,7 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.4</span></div></div>
+        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.5</span></div></div>
         <div className="time-center">
           <button className={speed === 0 ? 'icon-button active' : 'icon-button'} onClick={() => setSpeed(0)} aria-label="Pausar"><Pause size={16} /></button>
           {[1, 2, 4, 8].map((value) => <button key={value} className={speed === value ? 'speed active' : 'speed'} onClick={() => setSpeed(value)}>{value}×</button>)}
@@ -188,15 +194,7 @@ function App() {
           <div className="map-toolbar panel-floating">{(['Político', 'Economia', 'População', 'Militar', 'Tecnologia'] as MapMode[]).map((mode) => <button key={mode} onClick={() => setMapMode(mode)} className={mapMode === mode ? 'active' : ''}>{mode}</button>)}</div>
           <div className="world-map panel">
             <div className="world-title"><Map size={16}/> Mapa mundial • {mapMode}</div>
-            <WorldMap
-              selectedName={scenario.historicalLayerReady ? entity.name : undefined}
-              selectedEntityId={entity.id}
-              year={simulation.date.year}
-              entityNames={entityNames}
-              onSelectCountry={handleMapCountry}
-              onSelectTerritory={handleTerritory}
-              historicalLayerReady={scenario.historicalLayerReady}
-            />
+            <WorldMap selectedName={scenario.historicalLayerReady ? entity.name : undefined} selectedEntityId={entity.id} year={simulation.date.year} entityNames={entityNames} onSelectCountry={handleMapCountry} onSelectTerritory={handleTerritory} historicalLayerReady={scenario.historicalLayerReady} />
             <div className="entity-chips">{scenario.entities.map((item) => <button key={item.id} className={entity.id === item.id ? 'country-chip selected' : 'country-chip'} onClick={() => selectEntity(item)}>{item.name}</button>)}</div>
           </div>
           <div className="advance-bar panel">
@@ -213,11 +211,11 @@ function App() {
             <strong>{activeSystem} de {entity.name}</strong>
             <p>{systemInfo[activeSystem]}</p>
             {runtime && <SystemSnapshot activeSystem={activeSystem} runtime={runtime} />}
-            {uiMode === 'Avançada' && <SystemDetailPanel system={activeSystem} entityId={entity.id} entityName={entity.name} year={simulation.date.year} runtime={runtime} />}
-            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Confiança</b>{scenario.historicalLayerReady ? 'Alta/variável' : 'Histórica parcial'}</span><span><b>Tick</b>{simulation.elapsedDays}</span></div>}
+            {uiMode === 'Avançada' && <SystemDetailPanel system={activeSystem} entityId={entity.id} entityName={entity.name} year={simulation.date.year} runtime={runtime} allRuntimes={simulation.entities} diplomacy={simulation.diplomacy} treaties={simulation.treaties} onDiplomaticAction={handleDiplomaticAction} />}
+            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Tratados</b>{simulation.treaties.filter((item) => item.active).length}</span><span><b>Tick</b>{simulation.elapsedDays}</span></div>}
           </div>
           <div className="section-title history-title"><ScrollText size={12}/> História recente</div>
-          <div className="history-feed">{simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 5).map((item) => <div className="history-item" key={item.id}><span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span><strong>{item.title}</strong><p>{item.text}</p></div>)}</div>
+          <div className="history-feed">{simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 6).map((item) => <div className="history-item" key={item.id}><span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span><strong>{item.title}</strong><p>{item.text}</p></div>)}</div>
         </aside>
       </main>
 
