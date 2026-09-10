@@ -65,7 +65,7 @@ export function createInitialRuntime(
 }
 
 export function simulateDays(state: SimulationState, days: number): SimulationState {
-  let next = { ...state, entities: { ...state.entities }, events: [...state.events] };
+  let next: SimulationState = { ...state, entities: { ...state.entities }, events: [...state.events] };
 
   for (let i = 0; i < days; i += 1) {
     const date = addDays(next.date, 1);
@@ -111,16 +111,14 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
     next = { ...next, date, entities, elapsedDays: next.elapsedDays + 1 };
 
     if (date.day === 1 && date.month === 1) {
-      next.events = [
-        {
-          id: `year-${date.year}`,
-          date,
-          category: 'world',
-          title: `Início de ${date.year}`,
-          text: 'Economia, população, estabilidade e tecnologia receberam seus ticks anuais.',
-        },
-        ...next.events,
-      ].slice(0, 30);
+      const annualEvent: WorldEvent = {
+        id: `year-${date.year}`,
+        date,
+        category: 'world',
+        title: `Início de ${date.year}`,
+        text: 'Economia, população, estabilidade e tecnologia receberam seus ticks anuais.',
+      };
+      next.events = [annualEvent, ...next.events].slice(0, 30);
     }
   }
 
@@ -132,7 +130,7 @@ export function applyPlayerDirective(state: SimulationState, entityId: string, d
   if (!current) return state;
 
   const text = directive.toLowerCase();
-  let updated = { ...current };
+  const updated = { ...current };
   let category: WorldEvent['category'] = 'politics';
   let consequence = 'A ordem foi registrada como decisão estratégica. Seus efeitos serão resolvidos pelos sistemas da simulação.';
 
@@ -159,19 +157,18 @@ export function applyPlayerDirective(state: SimulationState, entityId: string, d
     consequence = 'A política social melhora bem-estar e estabilidade, com impacto no orçamento.';
   }
 
+  const directiveEvent: WorldEvent = {
+    id: `directive-${state.elapsedDays}-${Date.now()}`,
+    date: state.date,
+    entityId,
+    category,
+    title: 'Diretriz do jogador',
+    text: `${directive} — ${consequence}`,
+  };
+
   return {
     ...state,
     entities: { ...state.entities, [entityId]: updated },
-    events: [
-      {
-        id: `directive-${state.elapsedDays}-${Date.now()}`,
-        date: state.date,
-        entityId,
-        category,
-        title: 'Diretriz do jogador',
-        text: `${directive} — ${consequence}`,
-      },
-      ...state.events,
-    ].slice(0, 30),
+    events: [directiveEvent, ...state.events].slice(0, 30),
   };
 }
