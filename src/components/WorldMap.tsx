@@ -17,8 +17,8 @@ type FeatureCollection = { type: 'FeatureCollection'; features: Feature[] };
 type Props = {
   selectedName?: string;
   selectedEntityId?: string;
-  year: number;
-  entityNames: Record<string, string>;
+  year?: number;
+  entityNames?: Record<string, string>;
   onSelectCountry: (name: string) => void;
   onSelectTerritory?: (entityId: string, locationName: string) => void;
   historicalLayerReady?: boolean;
@@ -52,7 +52,7 @@ export function WorldMap({
   selectedName,
   selectedEntityId,
   year,
-  entityNames,
+  entityNames = {},
   onSelectCountry,
   onSelectTerritory,
   historicalLayerReady = false,
@@ -62,6 +62,7 @@ export function WorldMap({
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const effectiveYear = year ?? (historicalLayerReady ? 2026 : 1500);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +77,7 @@ export function WorldMap({
   }, []);
 
   const features = useMemo(() => data?.features ?? [], [data]);
-  const temporalLocations = useMemo(() => locationsForYear(year), [year]);
+  const temporalLocations = useMemo(() => locationsForYear(effectiveYear), [effectiveYear]);
 
   function countryName(feature: Feature) {
     return feature.properties.name || feature.properties.ADMIN || feature.properties.NAME || 'Entidade';
@@ -139,7 +140,7 @@ export function WorldMap({
               );
             })}
 
-            <g className="temporal-layer" aria-label={`Locations temporais de ${year}`}>
+            <g className="temporal-layer" aria-label={`Locations temporais de ${effectiveYear}`}>
               {temporalLocations.map((location) => {
                 const [x, y] = project([location.lon, location.lat]);
                 const active = location.ownerId === selectedEntityId;
