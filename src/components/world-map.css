@@ -1,4 +1,13 @@
 .temporal-layer{pointer-events:none}
+.country-shape.geography-only{fill:#141c25;stroke:#2a3542;opacity:.52;pointer-events:none}
+.historical-area-layer{pointer-events:none}
+.historical-area{pointer-events:auto;cursor:pointer;stroke:#cbd4df;stroke-width:.7;vector-effect:non-scaling-stroke;opacity:.68;transition:opacity .14s ease,stroke-width .14s ease,filter .14s ease;outline:none}
+.historical-area:hover,.historical-area:focus-visible{opacity:.92;stroke-width:1.25;filter:brightness(1.13)}
+.historical-area.active{opacity:.95;stroke:#ffffff;stroke-width:1.6;filter:brightness(1.18)}
+.historical-area.confidence-estimated{stroke-dasharray:3 2;opacity:.54}
+.historical-area.confidence-medium{opacity:.68}
+.historical-area.confidence-high{opacity:.78}
+.historical-area.color-0{fill:#7d3240}.historical-area.color-1{fill:#355a78}.historical-area.color-2{fill:#4d6943}.historical-area.color-3{fill:#755a37}.historical-area.color-4{fill:#684a78}.historical-area.color-5{fill:#376d6a}.historical-area.color-6{fill:#73504b}.historical-area.color-7{fill:#4b5872}
 .territory-marker{pointer-events:auto;cursor:pointer;outline:none}
 .territory-marker>circle:first-child{fill:#d7dde5;stroke:#111820;stroke-width:1.2;vector-effect:non-scaling-stroke;transition:r .14s ease,fill .14s ease}
 .territory-marker .marker-ring{fill:none;stroke:#d7dde5;stroke-width:.8;opacity:.28;vector-effect:non-scaling-stroke;transition:opacity .14s ease,r .14s ease}
