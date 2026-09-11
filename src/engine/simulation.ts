@@ -38,6 +38,22 @@ export type StrategicAIState = {
   reviews: number;
 };
 
+export type ProposalType = TreatyType | 'ultimatum';
+export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'countered';
+export type ProposalDecision = 'accept' | 'reject' | 'counter';
+export type DiplomaticProposal = {
+  id: string;
+  fromId: string;
+  toId: string;
+  type: ProposalType;
+  createdAt: GameDate;
+  status: ProposalStatus;
+  terms: string;
+  rationale: string;
+  counterText?: string;
+  resolution?: string;
+};
+
 export type WorldEvent = {
   id: string;
   date: GameDate;
@@ -53,12 +69,30 @@ export type SimulationState = {
   diplomacy: Record<string, DiplomaticRelation>;
   treaties: Treaty[];
   strategicAI: Record<string, StrategicAIState>;
+  proposals: DiplomaticProposal[];
+  playerEntityId: string;
   events: WorldEvent[];
   elapsedDays: number;
 };
 
 export function pairKey(a: string, b: string) {
   return [a, b].sort().join('::');
+}
+
+export function setPlayerEntity(state: SimulationState, entityId: string): SimulationState {
+  if (!state.entities[entityId] || state.playerEntityId === entityId) return state;
+  return {
+    ...state,
+    playerEntityId: entityId,
+    events: [{
+      id: `player-control-${entityId}-${state.elapsedDays}`,
+      date: state.date,
+      entityId,
+      category: 'world',
+      title: 'Entidade controlada alterada',
+      text: `${entityId} passou a ser a entidade diretamente controlada pelo jogador. A IA estratégica autônoma ficará suspensa para ela enquanto permanecer sob controle.`,
+    }, ...state.events].slice(0, 50),
+  };
 }
 
 export function addDays(date: GameDate, days: number): GameDate {
@@ -144,7 +178,17 @@ export function createInitialRuntime(date: GameDate, entities: ScenarioEntity[])
     }
   }
 
-  return { date, entities: runtime, diplomacy, treaties: [], strategicAI, events: [], elapsedDays: 0 };
+  return {
+    date,
+    entities: runtime,
+    diplomacy,
+    treaties: [],
+    strategicAI,
+    proposals: [],
+    playerEntityId: entities[0]?.id ?? '',
+    events: [],
+    elapsedDays: 0,
+  };
 }
 
 function treatyEffects(state: SimulationState, entityId: string) {
@@ -178,20 +222,33 @@ function hasTreaty(state: SimulationState, a: string, b: string, type: TreatyTyp
   return state.treaties.some((item) => item.active && item.type === type && pairKey(...item.parties) === key);
 }
 
-function signAITreaty(state: SimulationState, relation: DiplomaticRelation, type: TreatyType, date: GameDate) {
-  if (hasTreaty(state, relation.parties[0], relation.parties[1], type)) return state;
-  const key = pairKey(...relation.parties);
+function hasPendingProposal(state: SimulationState, fromId: string, toId: string, type?: ProposalType) {
+  return state.proposals.some((item) => item.status === 'pending' && item.fromId === fromId && item.toId === toId && (!type || item.type === type));
+}
+
+function signTreaty(
+  state: SimulationState,
+  a: string,
+  b: string,
+  type: TreatyType,
+  date: GameDate,
+  source: 'ai' | 'proposal' | 'negotiation',
+): SimulationState {
+  if (hasTreaty(state, a, b, type)) return state;
+  const key = pairKey(a, b);
+  const relation = state.diplomacy[key];
+  if (!relation) return state;
   const treaty: Treaty = {
-    id: `ai-${type}-${key}-${date.year}-${date.month}`,
+    id: `${source}-${type}-${key}-${date.year}-${date.month}-${state.elapsedDays}`,
     type,
-    parties: relation.parties,
+    parties: [a, b],
     signedAt: date,
     active: true,
   };
   const updatedRelation: DiplomaticRelation = {
     ...relation,
     treaties: [...relation.treaties, treaty.id],
-    memory: [`Acordo ${type} firmado por iniciativa estratégica durante a campanha`, ...relation.memory].slice(0, 8),
+    memory: [`Acordo ${type} firmado durante a campanha`, ...relation.memory].slice(0, 8),
     score: clamp(relation.score + 4),
     trust: clamp(relation.trust + 3),
   };
@@ -202,12 +259,93 @@ function signAITreaty(state: SimulationState, relation: DiplomaticRelation, type
   };
 }
 
+function signAITreaty(state: SimulationState, relation: DiplomaticRelation, type: TreatyType, date: GameDate) {
+  return signTreaty(state, relation.parties[0], relation.parties[1], type, date, 'ai');
+}
+
+function proposalTerms(type: ProposalType) {
+  if (type === 'trade') return 'Estabelecer um acordo comercial bilateral com facilitação de intercâmbio e tratamento preferencial compatível com a época.';
+  if (type === 'alliance') return 'Firmar compromisso de segurança e cooperação defensiva entre as partes, sujeito às obrigações políticas do período.';
+  if (type === 'technology') return 'Estabelecer intercâmbio de conhecimento, especialistas, licenças ou práticas técnicas compatíveis com a época.';
+  return 'Reduzir a pressão estratégica bilateral e responder às preocupações apresentadas pelo Estado remetente.';
+}
+
+function proposalRationale(type: ProposalType, ai: StrategicAIState) {
+  if (type === 'trade') return `A prioridade estratégica atual é econômica. ${ai.objective}.`;
+  if (type === 'alliance') return `A política externa busca parceiros confiáveis. ${ai.objective}.`;
+  if (type === 'technology') return `A liderança considera a capacidade tecnológica uma prioridade. ${ai.objective}.`;
+  return `A liderança considera a situação de segurança suficientemente séria para aumentar a pressão diplomática.`;
+}
+
+function createProposal(
+  state: SimulationState,
+  fromId: string,
+  toId: string,
+  type: ProposalType,
+  date: GameDate,
+  ai: StrategicAIState,
+): SimulationState {
+  if (!fromId || !toId || fromId === toId || hasPendingProposal(state, fromId, toId, type)) return state;
+  if (type !== 'ultimatum' && hasTreaty(state, fromId, toId, type)) return state;
+  const pendingToPlayer = state.proposals.filter((item) => item.status === 'pending' && item.toId === toId).length;
+  if (toId === state.playerEntityId && pendingToPlayer >= 4) return state;
+
+  const proposal: DiplomaticProposal = {
+    id: `proposal-${type}-${fromId}-${toId}-${date.year}-${date.month}-${state.elapsedDays}`,
+    fromId,
+    toId,
+    type,
+    createdAt: date,
+    status: 'pending',
+    terms: proposalTerms(type),
+    rationale: proposalRationale(type, ai),
+  };
+  const event: WorldEvent = {
+    id: `proposal-event-${proposal.id}`,
+    date,
+    entityId: fromId,
+    category: 'diplomacy',
+    title: type === 'ultimatum' ? 'Exigência diplomática recebida' : 'Proposta diplomática recebida',
+    text: `${fromId} enviou uma proposta de ${type} para ${toId}. A resposta agora depende do jogador.`,
+  };
+  return {
+    ...state,
+    proposals: [proposal, ...state.proposals].slice(0, 30),
+    events: [event, ...state.events].slice(0, 50),
+  };
+}
+
+function maybeProposeToPlayer(state: SimulationState, ai: StrategicAIState, date: GameDate): SimulationState {
+  const playerId = state.playerEntityId;
+  if (!playerId || ai.entityId === playerId) return state;
+  const relation = state.diplomacy[pairKey(ai.entityId, playerId)];
+  if (!relation || hasPendingProposal(state, ai.entityId, playerId)) return state;
+
+  const gate = hash(`${ai.entityId}:${playerId}:${date.year}:${date.month}`) % 4;
+  if (gate !== 0) return state;
+
+  if ((ai.focus === 'economy' || ai.focus === 'diplomacy') && relation.tradeInterest >= 58 && relation.score >= 30 && !hasTreaty(state, ai.entityId, playerId, 'trade')) {
+    return createProposal(state, ai.entityId, playerId, 'trade', date, ai);
+  }
+  if (ai.focus === 'diplomacy' && relation.score >= 58 && relation.trust >= 52 && ai.riskTolerance >= 35 && !hasTreaty(state, ai.entityId, playerId, 'alliance')) {
+    return createProposal(state, ai.entityId, playerId, 'alliance', date, ai);
+  }
+  if (ai.focus === 'technology' && relation.trust >= 48 && relation.score >= 42 && !hasTreaty(state, ai.entityId, playerId, 'technology')) {
+    return createProposal(state, ai.entityId, playerId, 'technology', date, ai);
+  }
+  if (ai.focus === 'military' && ai.aggression >= 70 && relation.threat >= 48) {
+    return createProposal(state, ai.entityId, playerId, 'ultimatum', date, ai);
+  }
+  return state;
+}
+
 function runStrategicAI(state: SimulationState, date: GameDate): SimulationState {
   let next = state;
   const aiEntries = Object.values(next.strategicAI);
   const generatedEvents: WorldEvent[] = [];
 
   for (const currentAI of aiEntries) {
+    if (currentAI.entityId === next.playerEntityId) continue;
     const runtime = next.entities[currentAI.entityId];
     if (!runtime) continue;
 
@@ -227,25 +365,31 @@ function runStrategicAI(state: SimulationState, date: GameDate): SimulationState
       const best = [...relations].sort((a, b) => (b.tradeInterest + b.score * 0.55 + b.trust * 0.3) - (a.tradeInterest + a.score * 0.55 + a.trust * 0.3))[0];
       const other = counterpart(best, ai.entityId);
       if (focus === 'economy' && best.tradeInterest >= 66 && best.score >= 38 && !hasTreaty(next, ai.entityId, other, 'trade')) {
-        next = signAITreaty(next, best, 'trade', date);
-        generatedEvents.push({
-          id: `ai-trade-${ai.entityId}-${other}-${date.year}-${date.month}`,
-          date,
-          entityId: ai.entityId,
-          category: 'diplomacy',
-          title: 'IA estratégica: acordo comercial',
-          text: `${ai.entityId} identificou ${other} como parceiro economicamente útil e concluiu um acordo comercial após avaliar interesse, confiança e relação bilateral.`,
-        });
+        if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'trade', date, ai);
+        else {
+          next = signAITreaty(next, best, 'trade', date);
+          generatedEvents.push({
+            id: `ai-trade-${ai.entityId}-${other}-${date.year}-${date.month}`,
+            date,
+            entityId: ai.entityId,
+            category: 'diplomacy',
+            title: 'IA estratégica: acordo comercial',
+            text: `${ai.entityId} identificou ${other} como parceiro economicamente útil e concluiu um acordo comercial.`,
+          });
+        }
       } else if (focus === 'diplomacy' && best.score >= 64 && best.trust >= 58 && ai.riskTolerance >= 38 && !hasTreaty(next, ai.entityId, other, 'alliance')) {
-        next = signAITreaty(next, best, 'alliance', date);
-        generatedEvents.push({
-          id: `ai-alliance-${ai.entityId}-${other}-${date.year}-${date.month}`,
-          date,
-          entityId: ai.entityId,
-          category: 'diplomacy',
-          title: 'IA estratégica: alinhamento',
-          text: `${ai.entityId} decidiu aprofundar sua segurança externa e formalizou uma aliança com ${other}.`,
-        });
+        if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'alliance', date, ai);
+        else {
+          next = signAITreaty(next, best, 'alliance', date);
+          generatedEvents.push({
+            id: `ai-alliance-${ai.entityId}-${other}-${date.year}-${date.month}`,
+            date,
+            entityId: ai.entityId,
+            category: 'diplomacy',
+            title: 'IA estratégica: alinhamento',
+            text: `${ai.entityId} decidiu aprofundar sua segurança externa e formalizou uma aliança com ${other}.`,
+          });
+        }
       }
     }
 
@@ -253,39 +397,48 @@ function runStrategicAI(state: SimulationState, date: GameDate): SimulationState
       const best = [...relations].sort((a, b) => (b.trust + b.score) - (a.trust + a.score))[0];
       const other = counterpart(best, ai.entityId);
       if (best.trust >= 55 && best.score >= 46 && !hasTreaty(next, ai.entityId, other, 'technology')) {
-        next = signAITreaty(next, best, 'technology', date);
-        generatedEvents.push({
-          id: `ai-tech-${ai.entityId}-${other}-${date.year}-${date.month}`,
-          date,
-          entityId: ai.entityId,
-          category: 'technology',
-          title: 'IA estratégica: cooperação tecnológica',
-          text: `${ai.entityId} buscou reduzir sua defasagem por meio de cooperação tecnológica com ${other}.`,
-        });
+        if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'technology', date, ai);
+        else {
+          next = signAITreaty(next, best, 'technology', date);
+          generatedEvents.push({
+            id: `ai-tech-${ai.entityId}-${other}-${date.year}-${date.month}`,
+            date,
+            entityId: ai.entityId,
+            category: 'technology',
+            title: 'IA estratégica: cooperação tecnológica',
+            text: `${ai.entityId} buscou reduzir sua defasagem por meio de cooperação tecnológica com ${other}.`,
+          });
+        }
       }
     }
 
     if (focus === 'military' && ai.aggression >= 62) {
       const tense = [...relations].sort((a, b) => (b.threat - b.score * 0.35) - (a.threat - a.score * 0.35))[0];
       const other = counterpart(tense, ai.entityId);
-      const key = pairKey(ai.entityId, other);
-      const updated: DiplomaticRelation = {
-        ...tense,
-        score: clamp(tense.score - 2.5),
-        trust: clamp(tense.trust - 2),
-        threat: clamp(tense.threat + 3),
-        memory: [`Pressão estratégica de ${ai.entityId} durante a campanha`, ...tense.memory].slice(0, 8),
-      };
-      next = { ...next, diplomacy: { ...next.diplomacy, [key]: updated } };
-      generatedEvents.push({
-        id: `ai-pressure-${ai.entityId}-${other}-${date.year}-${date.month}`,
-        date,
-        entityId: ai.entityId,
-        category: 'military',
-        title: 'IA estratégica: pressão sobre rival',
-        text: `${ai.entityId} passou a tratar ${other} como preocupação estratégica e elevou sua pressão diplomático-militar.`,
-      });
+      if (other === next.playerEntityId && ai.aggression >= 70 && tense.threat >= 48) {
+        next = createProposal(next, ai.entityId, other, 'ultimatum', date, ai);
+      } else {
+        const key = pairKey(ai.entityId, other);
+        const updated: DiplomaticRelation = {
+          ...tense,
+          score: clamp(tense.score - 2.5),
+          trust: clamp(tense.trust - 2),
+          threat: clamp(tense.threat + 3),
+          memory: [`Pressão estratégica de ${ai.entityId} durante a campanha`, ...tense.memory].slice(0, 8),
+        };
+        next = { ...next, diplomacy: { ...next.diplomacy, [key]: updated } };
+        generatedEvents.push({
+          id: `ai-pressure-${ai.entityId}-${other}-${date.year}-${date.month}`,
+          date,
+          entityId: ai.entityId,
+          category: 'military',
+          title: 'IA estratégica: pressão sobre rival',
+          text: `${ai.entityId} passou a tratar ${other} como preocupação estratégica e elevou sua pressão diplomático-militar.`,
+        });
+      }
     }
+
+    next = maybeProposeToPlayer(next, ai, date);
   }
 
   if (generatedEvents.length) {
@@ -301,6 +454,7 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
     diplomacy: { ...state.diplomacy },
     treaties: [...state.treaties],
     strategicAI: { ...state.strategicAI },
+    proposals: [...state.proposals],
     events: [...state.events],
   };
 
@@ -325,11 +479,11 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
 
       if (monthly) {
         const stabilityEffect = (stability - 50) / 500;
-        economyIndex = clamp(economyIndex + stabilityEffect + n * 0.35 + agreements.trade * 0.035 + (ai?.focus === 'economy' ? 0.025 : 0));
-        treasuryIndex = clamp(treasuryIndex + (economyIndex - 50) / 500 + n * 0.18 + agreements.trade * 0.01 + (ai?.focus === 'economy' ? 0.012 : 0));
-        stability = clamp(stability + (economyIndex - 50) / 900 + n * 0.12 + agreements.alliance * 0.008 + (ai?.focus === 'stability' ? 0.03 : 0));
-        militaryReadiness = clamp(militaryReadiness + (treasuryIndex - 45) / 1600 + n * 0.08 + agreements.alliance * 0.01 + (ai?.focus === 'military' ? 0.025 : 0));
-        technology = clamp(technology + agreements.technology * 0.012 + (ai?.focus === 'technology' ? 0.018 : 0));
+        economyIndex = clamp(economyIndex + stabilityEffect + n * 0.35 + agreements.trade * 0.035 + (ai?.focus === 'economy' && current.id !== next.playerEntityId ? 0.025 : 0));
+        treasuryIndex = clamp(treasuryIndex + (economyIndex - 50) / 500 + n * 0.18 + agreements.trade * 0.01 + (ai?.focus === 'economy' && current.id !== next.playerEntityId ? 0.012 : 0));
+        stability = clamp(stability + (economyIndex - 50) / 900 + n * 0.12 + agreements.alliance * 0.008 + (ai?.focus === 'stability' && current.id !== next.playerEntityId ? 0.03 : 0));
+        militaryReadiness = clamp(militaryReadiness + (treasuryIndex - 45) / 1600 + n * 0.08 + agreements.alliance * 0.01 + (ai?.focus === 'military' && current.id !== next.playerEntityId ? 0.025 : 0));
+        technology = clamp(technology + agreements.technology * 0.012 + (ai?.focus === 'technology' && current.id !== next.playerEntityId ? 0.018 : 0));
       }
 
       if (yearly) {
@@ -361,6 +515,96 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
   return next;
 }
 
+export function resolveDiplomaticProposal(
+  state: SimulationState,
+  proposalId: string,
+  decision: ProposalDecision,
+  counterText = '',
+): SimulationState {
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (!proposal || proposal.status !== 'pending') return state;
+  const key = pairKey(proposal.fromId, proposal.toId);
+  const currentRelation = state.diplomacy[key];
+  if (!currentRelation) return state;
+
+  let next = state;
+  let relation: DiplomaticRelation = { ...currentRelation, memory: [...currentRelation.memory], treaties: [...currentRelation.treaties] };
+  let status: ProposalStatus = proposal.status;
+  let resolution = '';
+
+  if (decision === 'accept') {
+    status = 'accepted';
+    if (proposal.type === 'ultimatum') {
+      relation.score = clamp(relation.score + 1);
+      relation.trust = clamp(relation.trust - 1);
+      relation.threat = clamp(relation.threat - 6);
+      relation.memory.unshift('Exigência diplomática aceita durante a campanha');
+      resolution = 'A exigência foi aceita. A tensão imediata diminuiu, embora a relação continue marcada pela coerção.';
+      next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
+    } else {
+      next = signTreaty(next, proposal.fromId, proposal.toId, proposal.type, state.date, 'proposal');
+      relation = next.diplomacy[key];
+      resolution = `A proposta foi aceita e o acordo de ${proposal.type} entrou em vigor.`;
+    }
+  } else if (decision === 'reject') {
+    status = 'rejected';
+    relation.score = clamp(relation.score - (proposal.type === 'ultimatum' ? 5 : 2));
+    relation.trust = clamp(relation.trust - (proposal.type === 'ultimatum' ? 3 : 2));
+    relation.threat = clamp(relation.threat + (proposal.type === 'ultimatum' ? 6 : 1));
+    relation.memory.unshift(proposal.type === 'ultimatum' ? 'Exigência diplomática rejeitada' : `Proposta de ${proposal.type} rejeitada`);
+    resolution = proposal.type === 'ultimatum'
+      ? 'A exigência foi rejeitada. A ameaça percebida e a tensão bilateral aumentaram.'
+      : 'A proposta foi recusada. A relação sofreu um pequeno desgaste.';
+    next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
+  } else {
+    status = 'countered';
+    const ai = state.strategicAI[proposal.fromId];
+    const text = counterText.trim();
+    const baseWillingness = relation.score * 0.34 + relation.trust * 0.3 + relation.tradeInterest * 0.14 + (ai?.openness ?? 50) * 0.14 + (ai?.riskTolerance ?? 50) * 0.08 - relation.threat * 0.08;
+    const goodFaithBonus = text.length >= 18 ? 5 : text.length >= 6 ? 2 : -4;
+    const accepted = baseWillingness + goodFaithBonus >= (proposal.type === 'alliance' ? 58 : proposal.type === 'ultimatum' ? 62 : 52);
+
+    if (accepted) {
+      relation.score = clamp(relation.score + 3);
+      relation.trust = clamp(relation.trust + 3);
+      relation.memory.unshift(`Contraproposta aceita: ${text || 'termos revisados'}`);
+      next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
+      if (proposal.type !== 'ultimatum') next = signTreaty(next, proposal.fromId, proposal.toId, proposal.type, state.date, 'proposal');
+      else {
+        const revised = next.diplomacy[key];
+        next = { ...next, diplomacy: { ...next.diplomacy, [key]: { ...revised, threat: clamp(revised.threat - 4) } } };
+      }
+      resolution = 'A contraproposta foi considerada aceitável pela outra parte e produziu um compromisso revisado.';
+    } else {
+      relation.score = clamp(relation.score - 1);
+      relation.memory.unshift(`Contraproposta não aceita: ${text || 'termos insuficientes'}`);
+      next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
+      resolution = 'A contraproposta foi considerada insuficiente. Nenhum novo acordo entrou em vigor.';
+    }
+  }
+
+  const updatedProposals = next.proposals.map((item) => item.id === proposalId ? {
+    ...item,
+    status,
+    counterText: decision === 'counter' ? counterText.trim() : item.counterText,
+    resolution,
+  } : item);
+  const event: WorldEvent = {
+    id: `proposal-resolution-${proposalId}-${state.elapsedDays}`,
+    date: state.date,
+    entityId: proposal.toId,
+    category: 'diplomacy',
+    title: decision === 'accept' ? 'Proposta diplomática aceita' : decision === 'reject' ? 'Proposta diplomática recusada' : 'Contraproposta diplomática enviada',
+    text: `${proposal.toId} respondeu a ${proposal.fromId}. ${resolution}`,
+  };
+
+  return {
+    ...next,
+    proposals: updatedProposals,
+    events: [event, ...next.events].slice(0, 50),
+  };
+}
+
 export function applyDiplomaticAction(state: SimulationState, fromId: string, toId: string, message: string): SimulationState {
   const key = pairKey(fromId, toId);
   const current = state.diplomacy[key];
@@ -368,7 +612,7 @@ export function applyDiplomaticAction(state: SimulationState, fromId: string, to
 
   const text = message.toLowerCase();
   const relation: DiplomaticRelation = { ...current, memory: [...current.memory], treaties: [...current.treaties] };
-  const treaties = [...state.treaties];
+  let next = state;
   let outcome = 'A conversa foi registrada e passará a fazer parte da memória bilateral.';
   let newTreaty: TreatyType | null = null;
 
@@ -402,20 +646,8 @@ export function applyDiplomaticAction(state: SimulationState, fromId: string, to
     relation.memory.unshift('Contato diplomático recente');
   }
 
-  if (newTreaty) {
-    const already = treaties.some((item) => item.active && item.type === newTreaty && pairKey(...item.parties) === key);
-    if (!already) {
-      const treaty: Treaty = {
-        id: `${newTreaty}-${key}-${state.elapsedDays}`,
-        type: newTreaty,
-        parties: [fromId, toId],
-        signedAt: state.date,
-        active: true,
-      };
-      treaties.push(treaty);
-      relation.treaties.push(treaty.id);
-    }
-  }
+  next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
+  if (newTreaty) next = signTreaty(next, fromId, toId, newTreaty, state.date, 'negotiation');
 
   const event: WorldEvent = {
     id: `dip-${state.elapsedDays}-${fromId}-${toId}`,
@@ -427,10 +659,8 @@ export function applyDiplomaticAction(state: SimulationState, fromId: string, to
   };
 
   return {
-    ...state,
-    diplomacy: { ...state.diplomacy, [key]: relation },
-    treaties,
-    events: [event, ...state.events].slice(0, 50),
+    ...next,
+    events: [event, ...next.events].slice(0, 50),
   };
 }
 
