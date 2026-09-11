@@ -63,61 +63,64 @@ export function simulateTerritorialControl(
 
   for (const war of warState.wars) {
     if (war.status !== 'active') continue;
-    const front = war.fronts[0];
-    if (!front?.locationId) continue;
-    const location = locations.get(front.locationId);
-    if (!location?.ownerId) continue;
 
-    const totalPower = Math.max(1, front.attackerPower + front.defenderPower);
-    const edge = (front.attackerPower - front.defenderPower) / totalPower;
-    const logisticsEdge = (front.attackerLogistics - front.defenderLogistics) / 100;
-    const outcome = outcomeFromEdge(edge + logisticsEdge * 0.22);
-    const existing = occupations[location.id];
-    const ownerId = existing?.ownerId ?? location.ownerId;
-    let progress = existing?.progress ?? 0;
+    for (const front of war.fronts) {
+      if (!front.locationId) continue;
+      const location = locations.get(front.locationId);
+      if (!location?.ownerId) continue;
 
-    if (outcome === 'attacker-advance') {
-      progress += days * (0.18 + Math.max(0, edge) * 0.95 + Math.max(0, logisticsEdge) * 0.28) * Math.max(0.35, front.intensity / 65);
-    } else if (outcome === 'defender-hold') {
-      progress -= days * (0.15 + Math.max(0, -edge) * 0.8 + Math.max(0, -logisticsEdge) * 0.22) * Math.max(0.3, front.intensity / 70);
-    } else {
-      progress += days * edge * 0.12;
-    }
+      const totalPower = Math.max(1, front.attackerPower + front.defenderPower);
+      const edge = (front.attackerPower - front.defenderPower) / totalPower;
+      const logisticsEdge = (front.attackerLogistics - front.defenderLogistics) / 100;
+      const outcome = outcomeFromEdge(edge + logisticsEdge * 0.22);
+      const existing = occupations[location.id];
+      const ownerId = existing?.ownerId ?? location.ownerId;
+      let progress = existing?.progress ?? 0;
 
-    progress = clamp(progress);
-    let controllerId = existing?.controllerId ?? ownerId;
-    if (progress >= 100) controllerId = war.attackerId;
-    else if (progress <= 0) controllerId = ownerId;
+      if (outcome === 'attacker-advance') {
+        progress += days * (0.18 + Math.max(0, edge) * 0.95 + Math.max(0, logisticsEdge) * 0.28) * Math.max(0.35, front.intensity / 65);
+      } else if (outcome === 'defender-hold') {
+        progress -= days * (0.15 + Math.max(0, -edge) * 0.8 + Math.max(0, -logisticsEdge) * 0.22) * Math.max(0.3, front.intensity / 70);
+      } else {
+        progress += days * edge * 0.12;
+      }
 
-    const previousBattleCount = existing?.battleCount ?? 0;
-    const crossedBattlePulse = Math.floor(war.elapsedDays / 14) > previousBattleCount;
-    const battleCount = crossedBattlePulse ? Math.floor(war.elapsedDays / 14) : previousBattleCount;
+      progress = clamp(progress);
+      let controllerId = existing?.controllerId ?? ownerId;
+      if (progress >= 100) controllerId = war.attackerId;
+      else if (progress <= 0) controllerId = ownerId;
 
-    occupations[location.id] = {
-      locationId: location.id,
-      ownerId,
-      controllerId,
-      warId: war.id,
-      progress,
-      contested: progress > 0 && progress < 100,
-      lastOutcome: outcome,
-      battleCount,
-      updatedAt: date,
-    };
+      const previousBattleCount = existing?.battleCount ?? 0;
+      const pulse = Math.floor(war.elapsedDays / 14);
+      const crossedBattlePulse = pulse > previousBattleCount;
+      const battleCount = crossedBattlePulse ? pulse : previousBattleCount;
 
-    if (crossedBattlePulse) {
-      newBattles.push({
-        id: `battle-${war.id}-${battleCount}`,
+      occupations[location.id] = {
+        locationId: location.id,
+        ownerId,
+        controllerId,
         warId: war.id,
-        frontId: front.id,
-        locationId: front.locationId,
-        date,
-        outcome,
-        attackerPower: front.attackerPower,
-        defenderPower: front.defenderPower,
-        intensity: front.intensity,
-        occupationProgress: progress,
-      });
+        progress,
+        contested: progress > 0 && progress < 100,
+        lastOutcome: outcome,
+        battleCount,
+        updatedAt: date,
+      };
+
+      if (crossedBattlePulse) {
+        newBattles.push({
+          id: `battle-${war.id}-${front.id}-${battleCount}`,
+          warId: war.id,
+          frontId: front.id,
+          locationId: front.locationId,
+          date,
+          outcome,
+          attackerPower: front.attackerPower,
+          defenderPower: front.defenderPower,
+          intensity: front.intensity,
+          occupationProgress: progress,
+        });
+      }
     }
   }
 
@@ -138,7 +141,7 @@ export function simulateTerritorialControl(
 
   return {
     occupations,
-    battles: [...newBattles, ...state.battles].slice(0, 40),
+    battles: [...newBattles, ...state.battles].slice(0, 80),
   };
 }
 
