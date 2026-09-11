@@ -70,6 +70,13 @@ type CoalitionPower = {
   operationalData: boolean;
 };
 
+type FrontResolution = {
+  front: FrontState;
+  scoreDelta: number;
+  attackerLossDelta: number;
+  defenderLossDelta: number;
+};
+
 export function createInitialWarState(): WarState {
   return { wars: [], mobilization: {} };
 }
@@ -90,6 +97,10 @@ function clamp(value: number, min: number, max: number) {
 
 function operationalArmyState() {
   return (globalThis as ArmyGlobal).__WORLD_STATE_ARMY_STATE__;
+}
+
+function territorialControlState() {
+  return (globalThis as ArmyGlobal).__WORLD_STATE_TERRITORIAL_CONTROL__ ?? createInitialTerritorialControlState();
 }
 
 function pairActive(state: WarState, a: string, b: string) {
@@ -150,7 +161,7 @@ function unitCombatPower(unit: ArmyUnit, frontLocation: ResolvedLocation | undef
   const commanderLogistics = clamp(unit.commander.logistics / 100, 0, 1);
   const commanderInitiative = clamp(unit.commander.initiative / 100, 0, 1);
   const commanderFactor = 0.88 + commanderSkill * 0.25 + commanderLogistics * 0.12 + commanderInitiative * 0.1;
-  const orderFactor = unit.order === 'prepare' ? 1.08 : unit.order === 'move' ? 0.76 : 1;
+  const orderFactor = unit.order === 'prepare' ? 1.08 : unit.order === 'move' ? 0.76 : unit.order === 'retreat' ? 0.52 : 1;
   const terrain = terrainMultiplier(frontLocation?.terrain, side);
   const power = 20 * personnelFactor * readiness * commanderFactor * orderFactor * distanceFactor * terrain;
   const logistics = clamp((unit.supply * 0.48 + unit.organization * 0.22 + unit.equipment * 0.2 + unit.commander.logistics * 0.1) * distanceFactor, 0, 100);
@@ -168,11 +179,31 @@ function aggregateNationalPower(simulation: SimulationState, warState: WarState,
   };
 }
 
-function coalitionPower(simulation: SimulationState, warState: WarState, members: string[], front: FrontState, side: 'attacker' | 'defender'): CoalitionPower {
+function frontLocation(front: FrontState, locations: Map<string, ResolvedLocation>) {
+  return front.locationId ? locations.get(front.locationId) : undefined;
+}
+
+function unitAssignedToFront(unit: ArmyUnit, targetFront: FrontState, allFronts: FrontState[], locations: Map<string, ResolvedLocation>) {
+  if (allFronts.length <= 1) return true;
+  const unitLocation = locations.get(unit.locationId);
+  const ranked = allFronts
+    .map((front) => ({ front, distance: distanceKm(unitLocation, frontLocation(front, locations)) }))
+    .sort((a, b) => a.distance - b.distance || a.front.id.localeCompare(b.front.id));
+  return ranked[0]?.front.id === targetFront.id;
+}
+
+function coalitionPower(
+  simulation: SimulationState,
+  warState: WarState,
+  members: string[],
+  front: FrontState,
+  side: 'attacker' | 'defender',
+  allFronts: FrontState[],
+): CoalitionPower {
   if (!members.length) return { power: 0, formations: 0, logistics: 0, operationalData: false };
   const armyState = operationalArmyState();
   const locations = locationMap(simulation.date.year);
-  const frontLocation = front.locationId ? locations.get(front.locationId) : undefined;
+  const target = frontLocation(front, locations);
   let power = 0;
   let formations = 0;
   let logisticsTotal = 0;
@@ -184,8 +215,9 @@ function coalitionPower(simulation: SimulationState, warState: WarState, members
     if (units.length) {
       operationalData = true;
       const mobilization = mobilizationMultiplier(warState.mobilization[id]);
-      for (const unit of units) {
-        const contribution = unitCombatPower(unit, frontLocation, locations, side);
+      const assigned = units.filter((unit) => unitAssignedToFront(unit, front, allFronts, locations));
+      for (const unit of assigned) {
+        const contribution = unitCombatPower(unit, target, locations, side);
         power += contribution.power * mobilization;
         logisticsTotal += contribution.logistics;
         logisticsSources += 1;
@@ -193,13 +225,90 @@ function coalitionPower(simulation: SimulationState, warState: WarState, members
       }
     } else {
       const fallback = aggregateNationalPower(simulation, warState, id, side, front.terrain);
-      power += fallback.power;
+      power += fallback.power / Math.max(1, allFronts.length);
       logisticsTotal += fallback.logistics;
       logisticsSources += 1;
     }
   }
 
   return { power, formations, logistics: logisticsSources ? logisticsTotal / logisticsSources : 0, operationalData };
+}
+
+function makeFront(warId: string, index: number, location?: ResolvedLocation): FrontState {
+  return {
+    id: `${warId}-front-${index + 1}`,
+    name: location ? `Frente de ${location.name}` : `Frente ${index + 1}`,
+    locationId: location?.id,
+    terrain: location?.terrain,
+    progress: 50,
+    intensity: 34,
+    attackerPower: 0,
+    defenderPower: 0,
+    attackerFormations: 0,
+    defenderFormations: 0,
+    attackerLogistics: 0,
+    defenderLogistics: 0,
+    operationalData: false,
+  };
+}
+
+function effectiveController(location: ResolvedLocation, control: TerritorialControlState) {
+  return control.occupations[location.id]?.controllerId ?? location.controllerId ?? location.ownerId;
+}
+
+function nextTarget(
+  war: War,
+  from: ResolvedLocation | undefined,
+  simulation: SimulationState,
+  control: TerritorialControlState,
+  blockedIds: Set<string>,
+) {
+  const candidates = locationsForEntity(war.defenderId, simulation.date.year)
+    .filter((location) => !blockedIds.has(location.id) && effectiveController(location, control) !== war.attackerId)
+    .map((location) => ({ location, distance: distanceKm(from, location) }))
+    .sort((a, b) => a.distance - b.distance || a.location.name.localeCompare(b.location.name));
+  return candidates[0]?.location;
+}
+
+function operationalFormationCount(ids: string[]) {
+  const armyState = operationalArmyState();
+  if (!armyState) return 0;
+  const members = new Set(ids);
+  return armyState.units.filter((unit) => members.has(unit.entityId) && unit.personnel > 500 && unit.strength > 8).length;
+}
+
+function evolveFrontNetwork(war: War, simulation: SimulationState, control: TerritorialControlState): FrontState[] {
+  const locations = locationMap(simulation.date.year);
+  const blocked = new Set(war.fronts.map((front) => front.locationId).filter(Boolean) as string[]);
+  const evolved = war.fronts.map((front, index) => {
+    if (!front.locationId) return front;
+    const occupation = control.occupations[front.locationId];
+    if (!occupation || occupation.controllerId !== war.attackerId || occupation.progress < 100) return front;
+    const previous = locations.get(front.locationId);
+    const target = nextTarget(war, previous, simulation, control, blocked);
+    if (!target) return front;
+    blocked.delete(front.locationId);
+    blocked.add(target.id);
+    return { ...makeFront(war.id, index, target), id: front.id, intensity: 28 };
+  });
+
+  const attackerFormations = operationalFormationCount(war.attackers);
+  const runtimeStrength = war.attackers.reduce((sum, id) => sum + (simulation.entities[id]?.militaryReadiness ?? 0), 0);
+  const desiredFronts = war.elapsedDays >= 180 && (attackerFormations >= 4 || runtimeStrength >= 135)
+    ? 3
+    : war.elapsedDays >= 60 && (attackerFormations >= 2 || runtimeStrength >= 75)
+      ? 2
+      : 1;
+
+  while (evolved.length < desiredFronts) {
+    const anchor = evolved[evolved.length - 1]?.locationId ? locations.get(evolved[evolved.length - 1].locationId!) : undefined;
+    const target = nextTarget(war, anchor, simulation, control, blocked);
+    if (!target) break;
+    blocked.add(target.id);
+    evolved.push(makeFront(war.id, evolved.length, target));
+  }
+
+  return evolved.slice(0, 3);
 }
 
 export function declareWar(state: WarState, simulation: SimulationState, attackerId: string, defenderId: string, goal: WarGoal): WarActionResult {
@@ -212,21 +321,6 @@ export function declareWar(state: WarState, simulation: SimulationState, attacke
   const defenders = [defenderId, ...alliancePartners(simulation, defenderId, attackerId)].filter((id) => !attackers.includes(id));
   const id = `war-${attackerId}-${defenderId}-${simulation.date.year}-${simulation.date.month}-${simulation.elapsedDays}`;
   const targetLocation = locationsForEntity(defenderId, simulation.date.year)[0] ?? locationsForEntity(attackerId, simulation.date.year)[0];
-  const front: FrontState = {
-    id: `${id}-front-1`,
-    name: targetLocation ? `Frente de ${targetLocation.name}` : 'Frente principal',
-    locationId: targetLocation?.id,
-    terrain: targetLocation?.terrain,
-    progress: 50,
-    intensity: 42,
-    attackerPower: 0,
-    defenderPower: 0,
-    attackerFormations: 0,
-    defenderFormations: 0,
-    attackerLogistics: 0,
-    defenderLogistics: 0,
-    operationalData: false,
-  };
   const war: War = {
     id,
     name: `${attackerId} × ${defenderId}`,
@@ -243,7 +337,7 @@ export function declareWar(state: WarState, simulation: SimulationState, attacke
     attackerLosses: 0,
     defenderLosses: 0,
     elapsedDays: 0,
-    fronts: [front],
+    fronts: [makeFront(id, 0, targetLocation)],
   };
 
   const mobilization = { ...state.mobilization };
@@ -251,12 +345,12 @@ export function declareWar(state: WarState, simulation: SimulationState, attacke
   mobilization[defenderId] = 'general';
   return {
     state: { ...state, wars: [war, ...state.wars], mobilization },
-    message: `Guerra declarada. ${attackers.length - 1} aliado(s) apoiam o atacante e ${defenders.length - 1} aliado(s) apoiam o defensor. A frente principal foi vinculada ao terreno disponível no mapa temporal.`,
+    message: `Guerra declarada. ${attackers.length - 1} aliado(s) apoiam o atacante e ${defenders.length - 1} aliado(s) apoiam o defensor. A campanha começa com uma frente e pode se dividir conforme forças, tempo e território permitirem.`,
   };
 }
 
-function dailyNoise(war: War, simulation: SimulationState) {
-  const seed = `${war.id}:${simulation.date.year}:${simulation.date.month}:${simulation.date.day}:${war.elapsedDays}`;
+function dailyNoise(war: War, simulation: SimulationState, frontId: string) {
+  const seed = `${war.id}:${frontId}:${simulation.date.year}:${simulation.date.month}:${simulation.date.day}:${war.elapsedDays}`;
   let hash = 2166136261;
   for (const char of seed) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
   return ((hash >>> 0) % 1000) / 1000 - 0.5;
@@ -270,37 +364,33 @@ function publishTerritorialControl(state: WarState, simulation: SimulationState,
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('world-state-territorial-control', { detail: next }));
 }
 
-export function simulateWarDays(state: WarState, simulation: SimulationState, days: number): WarState {
-  if (days <= 0 || !state.wars.some((war) => war.status === 'active')) return state;
-  const wars = state.wars.map((war) => {
-    if (war.status !== 'active') return war;
-    const primaryFront = war.fronts[0];
-    const attackers = coalitionPower(simulation, state, war.attackers, primaryFront, 'attacker');
-    const defenders = coalitionPower(simulation, state, war.defenders, primaryFront, 'defender');
-    const attackerPower = Math.max(0.1, attackers.power);
-    const defenderPower = Math.max(0.1, defenders.power);
-    const total = Math.max(1, attackerPower + defenderPower);
-    const edge = (attackerPower - defenderPower) / total;
-    const logisticsEdge = (attackers.logistics - defenders.logistics) / 100;
-    const random = dailyNoise(war, simulation);
-    const scoreDelta = (edge * 1.7 + logisticsEdge * 0.32 + random * 0.2) * Math.max(1, days / 7);
-    const intensity = clamp(42 + Math.abs(edge) * 34 + Math.min(12, (attackers.formations + defenders.formations) * 1.5) + random * 9, 18, 96);
-    const attackerLossDelta = Math.max(0, (defenderPower / attackerPower) * intensity * days * 0.011 * (1.08 - attackers.logistics / 220));
-    const defenderLossDelta = Math.max(0, (attackerPower / defenderPower) * intensity * days * 0.011 * (1.08 - defenders.logistics / 220));
-    const attackerSupport = clamp(war.attackerSupport - days * (0.017 + attackerLossDelta * 0.0009), 0, 100);
-    const defenderSupport = clamp(war.defenderSupport - days * (0.017 + defenderLossDelta * 0.0009), 0, 100);
-    const score = clamp(war.score + scoreDelta, -100, 100);
-    const progress = clamp(50 + score * 0.48, 2, 98);
+function resolveFront(
+  war: War,
+  front: FrontState,
+  allFronts: FrontState[],
+  state: WarState,
+  simulation: SimulationState,
+  days: number,
+): FrontResolution {
+  const attackers = coalitionPower(simulation, state, war.attackers, front, 'attacker', allFronts);
+  const defenders = coalitionPower(simulation, state, war.defenders, front, 'defender', allFronts);
+  const attackerPower = Math.max(0.1, attackers.power);
+  const defenderPower = Math.max(0.1, defenders.power);
+  const total = Math.max(1, attackerPower + defenderPower);
+  const edge = (attackerPower - defenderPower) / total;
+  const logisticsEdge = (attackers.logistics - defenders.logistics) / 100;
+  const random = dailyNoise(war, simulation, front.id);
+  const scale = Math.max(0.25, days / 7);
+  const scoreDelta = (edge * 1.7 + logisticsEdge * 0.32 + random * 0.2) * scale;
+  const intensity = clamp(36 + Math.abs(edge) * 38 + Math.min(14, (attackers.formations + defenders.formations) * 2) + random * 9, 14, 96);
+  const attackerLossDelta = Math.max(0, (defenderPower / attackerPower) * intensity * days * 0.009 * (1.08 - attackers.logistics / 220));
+  const defenderLossDelta = Math.max(0, (attackerPower / defenderPower) * intensity * days * 0.009 * (1.08 - defenders.logistics / 220));
+  const progressDelta = (edge * 7 + logisticsEdge * 2.3 + random * 0.7) * scale;
 
-    let status: WarStatus = 'active';
-    let victor: War['victor'];
-    if (score >= 92 || defenderSupport <= 5) { status = 'ended'; victor = 'attackers'; }
-    else if (score <= -92 || attackerSupport <= 5) { status = 'ended'; victor = 'defenders'; }
-    else if (war.elapsedDays + days >= 3650 && Math.abs(score) < 25) { status = 'ended'; victor = 'stalemate'; }
-
-    const fronts = war.fronts.map((front, index) => index === 0 ? {
+  return {
+    front: {
       ...front,
-      progress,
+      progress: clamp(front.progress + progressDelta, 2, 98),
       intensity,
       attackerPower,
       defenderPower,
@@ -309,7 +399,34 @@ export function simulateWarDays(state: WarState, simulation: SimulationState, da
       attackerLogistics: attackers.logistics,
       defenderLogistics: defenders.logistics,
       operationalData: attackers.operationalData || defenders.operationalData,
-    } : front);
+    },
+    scoreDelta,
+    attackerLossDelta,
+    defenderLossDelta,
+  };
+}
+
+export function simulateWarDays(state: WarState, simulation: SimulationState, days: number): WarState {
+  if (days <= 0 || !state.wars.some((war) => war.status === 'active')) return state;
+  const control = territorialControlState();
+  const wars = state.wars.map((war) => {
+    if (war.status !== 'active') return war;
+
+    const evolvedFronts = evolveFrontNetwork(war, simulation, control);
+    const resolutions = evolvedFronts.map((front) => resolveFront(war, front, evolvedFronts, state, simulation, days));
+    const frontCount = Math.max(1, resolutions.length);
+    const averageScoreDelta = resolutions.reduce((sum, result) => sum + result.scoreDelta, 0) / frontCount;
+    const attackerLossDelta = resolutions.reduce((sum, result) => sum + result.attackerLossDelta, 0);
+    const defenderLossDelta = resolutions.reduce((sum, result) => sum + result.defenderLossDelta, 0);
+    const score = clamp(war.score + averageScoreDelta, -100, 100);
+    const attackerSupport = clamp(war.attackerSupport - days * 0.014 - attackerLossDelta * 0.0009, 0, 100);
+    const defenderSupport = clamp(war.defenderSupport - days * 0.014 - defenderLossDelta * 0.0009, 0, 100);
+
+    let status: WarStatus = 'active';
+    let victor: War['victor'];
+    if (score >= 92 || defenderSupport <= 5) { status = 'ended'; victor = 'attackers'; }
+    else if (score <= -92 || attackerSupport <= 5) { status = 'ended'; victor = 'defenders'; }
+    else if (war.elapsedDays + days >= 3650 && Math.abs(score) < 25) { status = 'ended'; victor = 'stalemate'; }
 
     return {
       ...war,
@@ -321,9 +438,10 @@ export function simulateWarDays(state: WarState, simulation: SimulationState, da
       elapsedDays: war.elapsedDays + days,
       status,
       victor,
-      fronts,
+      fronts: resolutions.map((result) => result.front),
     };
   });
+
   const next = { ...state, wars };
   publishTerritorialControl(next, simulation, days);
   return next;
