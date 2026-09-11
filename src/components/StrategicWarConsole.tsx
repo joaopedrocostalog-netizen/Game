@@ -5,6 +5,7 @@ import type { TerritorialControlState } from '../engine/territorialControl';
 import type { ArmyState } from '../engine/army';
 import type { MobilizationLevel, WarGoal, WarState } from '../engine/war';
 import { CasusBelliPlanner } from './CasusBelliPlanner';
+import { CrisisConferencePanel } from './CrisisConferencePanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -25,6 +26,7 @@ export function StrategicWarConsole(props: Props) {
   if (!entity) return null;
   return <div className="strategic-war-wrapper">
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
+    <CrisisConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
     <WarConsole
       entityId={props.entityId}
       entities={props.entities}
