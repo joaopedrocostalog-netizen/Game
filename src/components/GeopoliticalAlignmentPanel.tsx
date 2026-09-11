@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ScenarioEntity } from '../data/scenarios';
-import { geopoliticalOutlookForEntity } from '../engine/geopoliticalAlignment';
+import { geopoliticalOutlookForEntity, runAnnualGeopoliticalRealignment } from '../engine/geopoliticalAlignment';
 import type { SimulationState } from '../engine/simulation';
 import './geopolitical-alignment.css';
 
@@ -13,7 +13,6 @@ type Props = {
 export function GeopoliticalAlignmentPanel({ entityId, entities, simulation }: Props) {
   const [revision, setRevision] = useState(0);
   const names = useMemo(() => Object.fromEntries(entities.map((entity) => [entity.id, entity.name])), [entities]);
-  const outlook = geopoliticalOutlookForEntity(simulation, entityId);
 
   useEffect(() => {
     const refresh = () => setRevision((value) => value + 1);
@@ -21,8 +20,19 @@ export function GeopoliticalAlignmentPanel({ entityId, entities, simulation }: P
     return () => window.removeEventListener('world-state-geopolitics', refresh);
   }, []);
 
-  void revision;
+  useEffect(() => {
+    const next = runAnnualGeopoliticalRealignment(simulation);
+    if (next !== simulation) {
+      Object.keys(simulation.diplomacy).forEach((key) => delete simulation.diplomacy[key]);
+      Object.assign(simulation.diplomacy, next.diplomacy);
+      simulation.treaties.splice(0, simulation.treaties.length, ...next.treaties);
+      simulation.events.splice(0, simulation.events.length, ...next.events);
+      setRevision((value) => value + 1);
+    }
+  }, [simulation.date.year]);
 
+  void revision;
+  const outlook = geopoliticalOutlookForEntity(simulation, entityId);
   const topPartners = outlook.partners.slice(0, 4);
   const topRivals = outlook.rivals.slice(0, 4);
   const influenced = outlook.influenced.slice(0, 5);
@@ -64,6 +74,6 @@ export function GeopoliticalAlignmentPanel({ entityId, entities, simulation }: P
       {influenced.map((item) => <div className="sphere-line" key={item.id}><span>{names[item.memberId] ?? item.memberId}</span><b>{item.strength.toFixed(0)}%</b><em>{item.trend}</em></div>)}
     </div>}
 
-    <small className="geopolitical-note">O realinhamento é recalculado anualmente. Alianças, confiança, ameaça, memória diplomática e assimetria de poder influenciam a formação de rivalidades e esferas. Último ciclo: {outlook.lastProcessedYear ?? 'ainda não processado'}.</small>
+    <small className="geopolitical-note">O realinhamento é recalculado uma vez por ano quando o console estratégico processa o novo ciclo. Alianças, confiança, ameaça e assimetria de poder influenciam rivalidades e esferas. Último ciclo: {outlook.lastProcessedYear ?? 'ainda não processado'}.</small>
   </div>;
 }
