@@ -1,6 +1,5 @@
 import type { ArmyState, Commander } from './army';
 import { deceptionPlansForEntity } from './informationWarfare';
-import { latestFrontIntelligence } from './militaryIntelligence';
 import { operationalPlanState } from './operationalCampaignPlans';
 import type { SimulationState, WorldEvent } from './simulation';
 import { theaterCommandState } from './multinationalTheaterCommand';
@@ -336,7 +335,7 @@ export function processAdaptiveEnemyCommand(playerEntityId: string, simulation: 
         reason: choice.reason,
         adoptedAtElapsedDay: existing?.doctrine === choice.doctrine ? existing.adoptedAtElapsedDay : simulation.elapsedDays,
         lastProcessedElapsedDay: simulation.elapsedDays,
-        lastCommanderReviewElapsedDay: existing?.lastCommanderReviewElapsedDay ?? war.elapsedDays,
+        lastCommanderReviewElapsedDay: existing?.lastCommanderReviewElapsedDay ?? simulation.elapsedDays,
       };
       doctrines = [doctrine, ...doctrines.filter((item) => !(item.warId === war.id && item.entityId === aiEntityId && item.opponentId === playerEntityId))].slice(0, 120);
       const applied = applyDoctrine(aiEntityId, playerEntityId, war, doctrine, pattern, nextArmy, nextWar);
@@ -351,17 +350,15 @@ export function processAdaptiveEnemyCommand(playerEntityId: string, simulation: 
       if (reviewed.reviewed) {
         nextArmy = reviewed.armyState;
         doctrines = doctrines.map((item) => item.warId === war.id && item.entityId === aiEntityId ? { ...item, lastCommanderReviewElapsedDay: simulation.elapsedDays } : item);
-        nextSimulation = {
-          ...nextSimulation,
-          events: [{
-            id: `command-review-${war.id}-${aiEntityId}-${simulation.elapsedDays}`,
-            date: simulation.date,
-            entityId: aiEntityId,
-            category: 'military',
-            title: 'Revisão do comando de campanha',
-            text: 'Após uma sequência de resultados desfavoráveis, a liderança militar substituiu um comandante de desempenho insuficiente.',
-          }, ...nextSimulation.events].slice(0, 50),
+        const reviewEvent: WorldEvent = {
+          id: `command-review-${war.id}-${aiEntityId}-${simulation.elapsedDays}`,
+          date: simulation.date,
+          entityId: aiEntityId,
+          category: 'military',
+          title: 'Revisão do comando de campanha',
+          text: 'Após uma sequência de resultados desfavoráveis, a liderança militar substituiu um comandante de desempenho insuficiente.',
         };
+        nextSimulation = { ...nextSimulation, events: [reviewEvent, ...nextSimulation.events].slice(0, 50) };
         changed = true;
       }
       changed = true;
@@ -370,15 +367,4 @@ export function processAdaptiveEnemyCommand(playerEntityId: string, simulation: 
 
   if (changed) publish({ patterns, doctrines, changes });
   return { simulation: nextSimulation, armyState: nextArmy, warState: nextWar, changed };
-}
-
-export function perceivedDoctrineFor(playerEntityId: string, warId: string, enemyId: string, simulation: SimulationState) {
-  const doctrine = rootState().doctrines.find((item) => item.warId === warId && item.entityId === enemyId && item.opponentId === playerEntityId);
-  const war = (globalThis as { __WORLD_STATE_LAST_WAR_STATE__?: WarState }).__WORLD_STATE_LAST_WAR_STATE__?.wars.find((item) => item.id === warId);
-  let confidence = 0;
-  if (war) {
-    const reports = war.fronts.map((front) => latestFrontIntelligence(playerEntityId, warId, front.id, simulation)).filter(Boolean);
-    confidence = reports.length ? reports.reduce((sum, report) => sum + (report?.confidenceScore ?? 0), 0) / reports.length : 0;
-  }
-  return { doctrine, visibilityConfidence: confidence };
 }
