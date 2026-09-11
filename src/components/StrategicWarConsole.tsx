@@ -24,7 +24,7 @@ export function StrategicWarConsole(props: Props) {
   const entity = props.entities.find((item) => item.id === props.entityId) ?? props.entities[0];
   if (!entity) return null;
   return <div className="strategic-war-wrapper">
-    <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onDeclareWar={props.onDeclareWar}/>
+    <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
     <WarConsole
       entityId={props.entityId}
       entities={props.entities}
