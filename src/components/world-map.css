@@ -15,3 +15,10 @@
 .territory-marker:hover .marker-ring,.territory-marker:focus-visible .marker-ring{opacity:.65}
 .territory-marker.active>circle:first-child{fill:#d92f43;stroke:#f5b4bd}
 .territory-marker.active .marker-ring{stroke:#d92f43;opacity:.72}
+.army-map-layer{pointer-events:none}
+.army-map-marker rect{fill:#161b22;stroke:#ff7a83;stroke-width:1.1;vector-effect:non-scaling-stroke}
+.army-map-marker text{font-size:7px;fill:#fff;user-select:none}
+.army-map-marker .army-strength-ring{fill:none;stroke:#ff6b75;stroke-width:1;opacity:.4;vector-effect:non-scaling-stroke}
+.army-map-marker.moving .army-strength-ring{stroke-dasharray:3 2;opacity:.85;animation:armyPulse 1.2s ease-in-out infinite}
+.army-route{stroke:#ff6b75;stroke-width:1;stroke-dasharray:5 4;opacity:.62;vector-effect:non-scaling-stroke}
+@keyframes armyPulse{0%,100%{r:10;opacity:.45}50%{r:13;opacity:.9}}
