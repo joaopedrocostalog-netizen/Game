@@ -3,7 +3,6 @@ import type { ScenarioEntity } from '../data/scenarios';
 import type { SimulationState } from '../engine/simulation';
 import type { TerritorialControlState } from '../engine/territorialControl';
 import type { ArmyState } from '../engine/army';
-import type { CasusBelliOption } from '../engine/casusBelli';
 import type { MobilizationLevel, WarGoal, WarState } from '../engine/war';
 import { CasusBelliPlanner } from './CasusBelliPlanner';
 import { WarConsole } from './WarConsole';
@@ -18,7 +17,7 @@ type Props = {
   onArmyStateChange: (state: ArmyState) => void;
   onWarStateChange: (state: WarState) => void;
   onMobilize: (level: MobilizationLevel) => void;
-  onDeclareWar: (targetId: string, goal: WarGoal, casusBelli: CasusBelliOption) => boolean;
+  onDeclareWar: (targetId: string, goal: WarGoal) => void;
 };
 
 export function StrategicWarConsole(props: Props) {
