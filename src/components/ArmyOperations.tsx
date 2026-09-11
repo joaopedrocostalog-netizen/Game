@@ -21,6 +21,8 @@ type Props = {
   warState: WarState;
 };
 
+type ArmyGlobal = typeof globalThis & { __WORLD_STATE_ARMY_STATE__?: ArmyState };
+
 function orderLabel(order: string) {
   if (order === 'move') return 'Em movimento';
   if (order === 'prepare') return 'Preparando operação';
@@ -36,12 +38,22 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
   }, [warState]);
 
   useEffect(() => {
-    setArmyState((state) => ensureEntityForces(state, simulation, entityId, year));
-  }, [entityId, year, simulation.entities]);
+    setArmyState((state) => {
+      let next = ensureEntityForces(state, simulation, entityId, year);
+      for (const participantId of activeWarEntities) {
+        next = ensureEntityForces(next, simulation, participantId, year);
+      }
+      return next;
+    });
+  }, [entityId, year, simulation.entities, activeWarEntities]);
 
   useEffect(() => {
     setArmyState((state) => simulateArmyToElapsed(state, simulation, activeWarEntities));
   }, [simulation.elapsedDays, activeWarEntities]);
+
+  useEffect(() => {
+    (globalThis as ArmyGlobal).__WORLD_STATE_ARMY_STATE__ = armyState;
+  }, [armyState]);
 
   const units = forcesForEntity(armyState, entityId);
   const destinations = locationsForYear(year);
@@ -113,7 +125,7 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
           <button disabled={!destinationId} onClick={() => setArmyState((state) => issueMove(state, selected.id, destinationId))}>Mover formação</button>
         </div>
         {selected.order === 'move' && <div className="movement-progress"><div><span>Deslocamento para {selected.destinationId ? (locationNames[selected.destinationId] ?? selected.destinationId) : 'destino'}</span><b>{selected.movementProgress.toFixed(0)}%</b></div><i><em style={{ width: `${selected.movementProgress}%` }}/></i></div>}
-        <p className="army-note">Movimentos, preparação e desgaste logístico avançam com o relógio principal da campanha. Guerra ativa aumenta consumo de suprimentos e reduz organização.</p>
+        <p className="army-note">Movimentos, preparação e desgaste logístico avançam com o relógio principal da campanha. Formações materializadas agora também alimentam o cálculo das frentes: distância, comandante, moral, organização, suprimento e equipamento afetam o poder efetivo.</p>
       </div>}
     </>}
   </div>;
