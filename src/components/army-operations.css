@@ -1,0 +1,16 @@
+.army-operations{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08)}
+.army-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}
+.army-summary-grid>div{padding:9px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:rgba(255,255,255,.025);display:flex;flex-direction:column;gap:3px}
+.army-summary-grid span,.army-unit span,.army-commander span,.commander-traits span,.movement-progress span{font-size:10px;color:#8f99a8}
+.army-summary-grid strong{font-size:13px;color:#f1f3f5}
+.army-unit-list{display:flex;flex-direction:column;gap:6px}
+.army-unit{width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:rgba(255,255,255,.025);color:#e8ebef;cursor:pointer}
+.army-unit.active{border-color:rgba(226,68,74,.7);background:rgba(226,68,74,.08)}
+.army-unit>div{display:flex;flex-direction:column;gap:2px}.army-unit>div:last-child{text-align:right}
+.army-detail-card{margin-top:9px;padding:10px;border:1px solid rgba(255,255,255,.09);border-radius:10px;background:rgba(8,11,16,.45)}
+.army-commander{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}.army-commander>div{display:flex;flex-direction:column}.army-commander>div:last-child{text-align:right}
+.army-bars{display:grid;gap:5px}.army-metric>div{display:flex;justify-content:space-between;font-size:10px;color:#aab2bf}.army-metric>i,.movement-progress>i{height:4px;background:rgba(255,255,255,.08);display:block;border-radius:4px;overflow:hidden;margin-top:3px}.army-metric em,.movement-progress em{display:block;height:100%;background:linear-gradient(90deg,#b72a34,#e65c63)}
+.commander-traits{display:flex;gap:7px;flex-wrap:wrap;margin:9px 0}.commander-traits span{border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:4px 7px}
+.army-order-actions,.army-move-row{display:flex;gap:6px;margin-top:7px}.army-order-actions button,.army-move-row button{border:1px solid rgba(255,255,255,.09);background:#171b22;color:#dfe3e8;padding:7px 9px;border-radius:7px;font-size:10px;cursor:pointer}.army-order-actions button.active{border-color:#d94b54;background:rgba(217,75,84,.12)}
+.army-move-row select{flex:1;min-width:0;background:#11151b;border:1px solid rgba(255,255,255,.09);color:#dfe3e8;border-radius:7px;padding:7px;font-size:10px}
+.movement-progress{margin-top:9px}.movement-progress>div{display:flex;justify-content:space-between;gap:8px}.movement-progress b{font-size:10px}.army-note,.army-empty{font-size:10px;line-height:1.45;color:#8f99a8;margin:8px 0 0}.army-empty{padding:9px;border:1px dashed rgba(255,255,255,.1);border-radius:8px}
