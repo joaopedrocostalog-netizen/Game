@@ -10,6 +10,7 @@ import { CoalitionInterestsPanel } from './CoalitionInterestsPanel';
 import { CoalitionPoliticsPanel } from './CoalitionPoliticsPanel';
 import { AllianceCommandPanel } from './AllianceCommandPanel';
 import { PostWarConferencePanel } from './PostWarConferencePanel';
+import { PostWarDisputePanel } from './PostWarDisputePanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -31,6 +32,7 @@ export function StrategicWarConsole(props: Props) {
   return <div className="strategic-war-wrapper">
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
     <CrisisConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
+    <PostWarDisputePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
     <CoalitionInterestsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl}/>
     <CoalitionPoliticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onWarStateChange={props.onWarStateChange}/>
     <AllianceCommandPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onWarStateChange={props.onWarStateChange}/>
