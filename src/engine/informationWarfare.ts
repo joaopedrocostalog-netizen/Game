@@ -1,6 +1,6 @@
 import type { ArmyState } from './army';
-import { militaryIntelligenceState } from './militaryIntelligence';
 import { operationalPlanState } from './operationalCampaignPlans';
+import { theaterCommandState } from './multinationalTheaterCommand';
 import type { SimulationState, WorldEvent } from './simulation';
 import { setFrontOrder, setFrontPriority, type WarState } from './war';
 
@@ -176,13 +176,13 @@ export function processInformationWarfare(simulation: SimulationState, armyState
   let incidents = [...state.incidents];
   let deceptionPlans = state.deceptionPlans.map((item) => ({ ...item }));
 
+  const headquarters = theaterCommandState().headquarters;
   const activePlans = operationalPlanState().plans.filter((plan) => !['completed', 'aborted'].includes(plan.status));
   for (const plan of activePlans) {
-    const sides = opposingSide(nextWar, plan.warId, plan.hqId.includes('theater-hq-') ? '' : '');
     const war = nextWar.wars.find((item) => item.id === plan.warId && item.status === 'active');
-    if (!war) continue;
-    const force = armyState.units.filter((unit) => plan.forceId && unit.id.startsWith(plan.forceId));
-    const ownerId = force[0]?.entityId ?? war.attackers[0];
+    const hq = headquarters.find((item) => item.id === plan.hqId);
+    if (!war || !hq) continue;
+    const ownerId = hq.commanderEntityId;
     const opposition = opposingSide(nextWar, plan.warId, ownerId);
     if (!opposition?.enemies.length) continue;
     const enemyCapability = averageCapability(opposition.enemies, simulation);
