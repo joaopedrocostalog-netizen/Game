@@ -11,7 +11,10 @@ import {
   plansForHeadquarters,
   processOperationalCampaignPlans,
   resumeOperationalPlan,
+  type EnemyOperationalReaction,
+  type OperationIntelligenceAssessment,
   type OperationPhase,
+  type OperationSurpriseState,
   type OperationTempo,
 } from '../engine/operationalCampaignPlans';
 import type { SimulationState } from '../engine/simulation';
@@ -40,6 +43,28 @@ const tempoLabels: Record<OperationTempo, string> = {
   deliberate: 'Deliberado',
   standard: 'Padrão',
   rapid: 'Rápido',
+};
+
+const intelLabels: Record<OperationIntelligenceAssessment, string> = {
+  unknown: 'Quadro desconhecido',
+  poor: 'Inteligência fraca',
+  adequate: 'Inteligência razoável',
+  good: 'Inteligência boa',
+  excellent: 'Inteligência excelente',
+};
+
+const surpriseLabels: Record<OperationSurpriseState, string> = {
+  none: 'Sem vantagem clara',
+  advantage: 'Potencial de surpresa favorável',
+  risk: 'Risco de surpresa inimiga',
+  suffered: 'Surpresa sofrida',
+};
+
+const reactionLabels: Record<EnemyOperationalReaction, string> = {
+  none: 'Nenhuma reação confirmada',
+  reinforcing: 'Reforços inimigos prováveis',
+  entrenching: 'Defesa inimiga se consolidando',
+  counterattack: 'Contraofensiva inimiga provável',
 };
 
 export function OperationalCampaignPlansPanel({ entityId, entities, simulation, armyState, warState, onArmyStateChange, onWarStateChange }: Props) {
@@ -79,7 +104,7 @@ export function OperationalCampaignPlansPanel({ entityId, entities, simulation, 
   function createPlan(hqId: string, frontId: string, objective: string, tempo: OperationTempo) {
     const reserve = reserveByHq[hqId] ?? 25;
     const plan = createOperationalCampaignPlan(hqId, frontId, objective, simulation, tempo, reserve);
-    setMessage(plan ? `${plan.name} entrou em preparação.` : 'Já existe uma operação ativa nessa frente ou o HQ não está disponível.');
+    setMessage(plan ? `${plan.name} entrou em preparação usando o quadro de inteligência disponível.` : 'Já existe uma operação ativa nessa frente ou o HQ não está disponível.');
     setRevision((value) => value + 1);
   }
 
@@ -104,7 +129,7 @@ export function OperationalCampaignPlansPanel({ entityId, entities, simulation, 
   return <div className="operational-plans-panel">
     <div className="operational-plans-heading">
       <span>PLANEJAMENTO OPERACIONAL</span>
-      <strong>Campanhas por fases, reservas e preparação logística</strong>
+      <strong>Campanhas por fases, inteligência, reservas e preparação logística</strong>
     </div>
 
     {headquarters.map((hq) => {
@@ -137,7 +162,7 @@ export function OperationalCampaignPlansPanel({ entityId, entities, simulation, 
           </div>)}
         </div>
 
-        {plans.map((plan) => <div className={`operational-plan-card ${plan.status}`} key={plan.id}>
+        {plans.map((plan) => <div className={`operational-plan-card ${plan.status} ${plan.compromised ? 'compromised' : ''}`} key={plan.id}>
           <div className="operational-plan-head">
             <div><b>{plan.name}</b><span>{tempoLabels[plan.tempo]} • reserva {plan.reserveRatio}%</span></div>
             <strong>{plan.status.toUpperCase()}</strong>
@@ -151,10 +176,17 @@ export function OperationalCampaignPlansPanel({ entityId, entities, simulation, 
             <span>Risco <b>{plan.risk.toFixed(0)}%</b></span>
             <span>Logística mínima <b>{plan.logisticsRequirement.toFixed(0)}%</b></span>
           </div>
+          <div className="operational-intelligence-strip">
+            <span className={`intel-${plan.intelligenceAssessment}`}><b>{intelLabels[plan.intelligenceAssessment]}</b><small>Confiança qualitativa do quadro usado no plano</small></span>
+            <span className={`surprise-${plan.surpriseState}`}><b>{surpriseLabels[plan.surpriseState]}</b><small>Impacto esperado da incerteza operacional</small></span>
+            <span className={plan.compromised ? 'enemy-reacting' : ''}><b>{reactionLabels[plan.enemyReaction]}</b><small>{plan.compromised ? 'Há sinais de que o adversário percebeu a preparação' : 'Nenhuma indicação segura de comprometimento do plano'}</small></span>
+          </div>
           <div className="operational-plan-meta">
             <span>Objetivo: {plan.objective}</span>
             <span>Início previsto: dia de campanha {plan.plannedStartElapsedDay}</span>
           </div>
+          {plan.compromised && <div className="operational-warning intelligence-warning">PLANO POSSIVELMENTE COMPROMETIDO — o adversário pode ter reforçado ou alterado sua postura antes do ataque.</div>}
+          {plan.surpriseState === 'suffered' && <div className="operational-warning intelligence-warning">SURPRESA OPERACIONAL — o quadro encontrado durante o assalto divergiu da inteligência disponível e afetou a organização inicial.</div>}
           {plan.pauseReason && <div className="operational-warning">{plan.pauseReason}</div>}
           {plan.abortReason && <div className="operational-warning">{plan.abortReason}</div>}
           {!['completed', 'aborted'].includes(plan.status) && <div className="operational-plan-actions">
@@ -166,6 +198,6 @@ export function OperationalCampaignPlansPanel({ entityId, entities, simulation, 
     })}
 
     {message && <div className="operational-plan-message">{message}</div>}
-    <small className="operational-plan-note">O plano operacional controla intenção e calendário. O combate continua sendo resolvido pelo motor normal de frentes, logística, formações e baixas. Operações podem atrasar ou pausar automaticamente se o abastecimento, a moral ou a organização caírem abaixo dos limites planejados.</small>
+    <small className="operational-plan-note">O planejamento usa somente o quadro de inteligência disponível ao comando. Relatórios antigos, fracos ou enganados podem atrasar a preparação, aumentar o risco, reduzir o progresso do ataque ou permitir surpresa inimiga. O combate real continua sendo resolvido pelo motor de frentes, logística, formações e baixas.</small>
   </div>;
 }
