@@ -27,6 +27,10 @@ const goalLabels: Record<WarGoal, string> = {
   defense: 'Defesa / restauração do status quo',
 };
 
+const terrainLabels: Record<string, string> = {
+  plains: 'Planícies', hills: 'Colinas', mountains: 'Montanhas', coastal: 'Litoral', forest: 'Floresta', desert: 'Deserto', mixed: 'Terreno misto',
+};
+
 function SideList({ ids, names }: { ids: string[]; names: Record<string, string> }) {
   return <div className="war-side-list">{ids.map((id) => <span key={id}>{names[id] ?? id}</span>)}</div>;
 }
@@ -64,7 +68,7 @@ export function WarConsole({ entityId, entities, simulation, warState, onMobiliz
         {Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
       <button className="declare-war" disabled={!targetId} onClick={() => targetId && onDeclareWar(targetId, goal)}>Declarar guerra</button>
-      <p>Alianças ativas podem convocar participantes automaticamente. A resolução usa prontidão, tecnologia, tesouro, estabilidade, mobilização e desgaste.</p>
+      <p>O motor usa alianças, mobilização e capacidade nacional. Quando formações operacionais existem, distância da frente, terreno, comandante, moral, organização, suprimento e equipamento passam a substituir parte da abstração nacional.</p>
     </div>
 
     <div className="war-list">
@@ -81,7 +85,15 @@ export function WarConsole({ entityId, entities, simulation, warState, onMobiliz
             <span><b>{playerOnAttack ? war.attackerSupport.toFixed(0) : war.defenderSupport.toFixed(0)}%</b> apoio de guerra</span>
             <span><b>{Math.round(war.elapsedDays)}</b> dias</span>
           </div>
-          {war.fronts.map((front) => <div className="front-row" key={front.id}><div><strong>{front.name}</strong><span>Intensidade {front.intensity.toFixed(0)}%</span></div><div className="front-track"><i style={{ width: `${front.progress}%` }} /></div></div>)}
+          {war.fronts.map((front) => <div className="front-row" key={front.id}>
+            <div><strong>{front.name}</strong><span>Intensidade {front.intensity.toFixed(0)}%</span></div>
+            <div className="front-subline"><span>{terrainLabels[front.terrain ?? ''] ?? 'Terreno não mapeado'}</span><span>{front.operationalData ? 'Dados operacionais ativos' : 'Estimativa agregada'}</span></div>
+            <div className="front-track"><i style={{ width: `${front.progress}%` }} /></div>
+            <div className="front-power-grid">
+              <div><span>Atacantes</span><b>{front.attackerPower.toFixed(1)}</b><small>{front.attackerFormations} formações • logística {front.attackerLogistics.toFixed(0)}</small></div>
+              <div><span>Defensores</span><b>{front.defenderPower.toFixed(1)}</b><small>{front.defenderFormations} formações • logística {front.defenderLogistics.toFixed(0)}</small></div>
+            </div>
+          </div>)}
         </div>;
       })}
     </div>
