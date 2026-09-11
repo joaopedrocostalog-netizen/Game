@@ -41,6 +41,7 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
   const preparation = target ? preparationBetween(entity.id, target.id) : undefined;
   const ready = !!selected && preparationReady(preparation, selected, simulation.elapsedDays);
   const truce = target ? activeTruceBetween(entity.id, target.id, simulation.elapsedDays) : undefined;
+  const readinessBlocked = (simulation.entities[entity.id]?.militaryReadiness ?? 0) < 28;
   const remaining = preparation && selected && preparation.casusBelliType === selected.type ? Math.max(0, preparation.readyAtElapsedDay - simulation.elapsedDays) : selected?.preparationDays ?? 0;
 
   useEffect(() => {
@@ -83,7 +84,7 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
   }
 
   function declare() {
-    if (!target || !selected || !ready || truce) return;
+    if (!target || !selected || !ready || truce || readinessBlocked) return;
     const nextSimulation = applyCasusBelliCosts(simulation, entity.id, target.id, selected);
     Object.assign(simulation.entities, nextSimulation.entities);
     Object.keys(simulation.diplomacy).forEach((key) => delete simulation.diplomacy[key]);
@@ -105,8 +106,8 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
       <small>{selected.reason}</small>
     </div>}
     {selected && <label className="casus-field casus-goal"><span>Objetivo de guerra compatível</span><select value={goal} onChange={(event) => setGoal(event.target.value as WarGoal)}>{selected.allowedGoals.map((value) => <option key={value} value={value}>{goalLabels[value]}</option>)}</select></label>}
-    {truce ? <div className="truce-warning"><b>Trégua em vigor</b><span>{Math.max(0, truce.expiresAtElapsedDay - simulation.elapsedDays)} dias restantes. Nenhum casus belli pode romper automaticamente o tratado.</span></div> : preparation && selected && preparation.casusBelliType === selected.type ? <div className={`preparation-status ${ready ? 'ready' : ''}`}><b>{ready ? 'Justificativa pronta' : 'Preparação em andamento'}</b><span>{ready ? 'A declaração pode ser emitida.' : `${remaining} dias restantes; avance o relógio da campanha.`}</span></div> : null}
-    <div className="casus-actions"><button disabled={!selected?.available || !!truce || ready} onClick={prepare}>{preparation && selected && preparation.casusBelliType === selected.type && !ready ? 'Reiniciar preparação' : 'Preparar justificativa'}</button><button className="declare-war" disabled={!target || !selected?.available || !ready || !!truce} onClick={declare}>Declarar guerra</button></div>
+    {truce ? <div className="truce-warning"><b>Trégua em vigor</b><span>{Math.max(0, truce.expiresAtElapsedDay - simulation.elapsedDays)} dias restantes. Nenhum casus belli pode romper automaticamente o tratado.</span></div> : readinessBlocked ? <div className="truce-warning"><b>Prontidão militar insuficiente</b><span>É possível preparar a justificativa, mas a declaração exige prontidão militar de pelo menos 28.</span></div> : preparation && selected && preparation.casusBelliType === selected.type ? <div className={`preparation-status ${ready ? 'ready' : ''}`}><b>{ready ? 'Justificativa pronta' : 'Preparação em andamento'}</b><span>{ready ? 'A declaração pode ser emitida.' : `${remaining} dias restantes; avance o relógio da campanha.`}</span></div> : null}
+    <div className="casus-actions"><button disabled={!selected?.available || !!truce || ready} onClick={prepare}>{preparation && selected && preparation.casusBelliType === selected.type && !ready ? 'Reiniciar preparação' : 'Preparar justificativa'}</button><button className="declare-war" disabled={!target || !selected?.available || !ready || !!truce || readinessBlocked} onClick={declare}>Declarar guerra</button></div>
     <p className="casus-footnote">A justificativa altera custos políticos e diplomáticos. Religião e outros motivos históricos específicos só serão usados quando os dados estruturados do cenário suportarem isso sem anacronismo.</p>
   </div>;
 }
