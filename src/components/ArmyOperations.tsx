@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { locationsForEntity, locationsForYear } from '../data/territories';
 import type { SimulationState } from '../engine/simulation';
 import type { WarState } from '../engine/war';
+import type { TerritorialControlState } from '../engine/territorialControl';
 import {
-  createInitialArmyState,
   ensureEntityForces,
   forcesForEntity,
   issueMove,
   logisticsScore,
   setUnitOrder,
-  simulateArmyToElapsed,
+  supplyLineForUnit,
   type ArmyState,
 } from '../engine/army';
 import './army-operations.css';
@@ -19,18 +19,19 @@ type Props = {
   year: number;
   simulation: SimulationState;
   warState: WarState;
+  armyState: ArmyState;
+  territorialControl: TerritorialControlState;
+  onArmyStateChange: (state: ArmyState) => void;
 };
-
-type ArmyGlobal = typeof globalThis & { __WORLD_STATE_ARMY_STATE__?: ArmyState };
 
 function orderLabel(order: string) {
   if (order === 'move') return 'Em movimento';
+  if (order === 'retreat') return 'Em retirada';
   if (order === 'prepare') return 'Preparando operação';
   return 'Mantendo posição';
 }
 
-export function ArmyOperations({ entityId, year, simulation, warState }: Props) {
-  const [armyState, setArmyState] = useState<ArmyState>(() => createInitialArmyState());
+export function ArmyOperations({ entityId, year, simulation, warState, armyState, territorialControl, onArmyStateChange }: Props) {
   const activeWarEntities = useMemo(() => {
     const ids = new Set<string>();
     warState.wars.filter((war) => war.status === 'active').forEach((war) => [...war.attackers, ...war.defenders].forEach((id) => ids.add(id)));
@@ -38,22 +39,10 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
   }, [warState]);
 
   useEffect(() => {
-    setArmyState((state) => {
-      let next = ensureEntityForces(state, simulation, entityId, year);
-      for (const participantId of activeWarEntities) {
-        next = ensureEntityForces(next, simulation, participantId, year);
-      }
-      return next;
-    });
-  }, [entityId, year, simulation.entities, activeWarEntities]);
-
-  useEffect(() => {
-    setArmyState((state) => simulateArmyToElapsed(state, simulation, activeWarEntities));
-  }, [simulation.elapsedDays, activeWarEntities]);
-
-  useEffect(() => {
-    (globalThis as ArmyGlobal).__WORLD_STATE_ARMY_STATE__ = armyState;
-  }, [armyState]);
+    let next = ensureEntityForces(armyState, simulation, entityId, year);
+    for (const participantId of activeWarEntities) next = ensureEntityForces(next, simulation, participantId, year);
+    if (next !== armyState) onArmyStateChange(next);
+  }, [entityId, year, simulation.entities, activeWarEntities, armyState, onArmyStateChange]);
 
   const units = forcesForEntity(armyState, entityId);
   const destinations = locationsForYear(year);
@@ -71,22 +60,9 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
     if (!destinationId && owned[0]) setDestinationId(owned[0].id);
   }, [destinationId, owned]);
 
-  useEffect(() => {
-    const markers = units.map((unit) => ({
-      id: unit.id,
-      entityId: unit.entityId,
-      name: unit.name,
-      locationId: unit.locationId,
-      destinationId: unit.destinationId,
-      movementProgress: unit.movementProgress,
-      strength: unit.strength,
-      order: unit.order,
-    }));
-    window.dispatchEvent(new CustomEvent('world-state-armies', { detail: { entityId, markers } }));
-  }, [entityId, units]);
-
   const logistics = logisticsScore(armyState, entityId);
   const selected = units.find((item) => item.id === selectedUnitId);
+  const selectedSupply = selected ? supplyLineForUnit(selected, year, territorialControl) : undefined;
 
   return <div className="army-operations">
     <div className="context-kicker">Exércitos, comandantes e logística</div>
@@ -113,19 +89,24 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
           <Metric label="Suprimento" value={selected.supply}/>
           <Metric label="Equipamento" value={selected.equipment}/>
         </div>
-        <div className="commander-traits"><span>Logística <b>{selected.commander.logistics}</b></span><span>Iniciativa <b>{selected.commander.initiative}</b></span></div>
+        <div className="commander-traits"><span>Efetivo <b>{Math.round(selected.personnel).toLocaleString('pt-BR')}</b></span><span>Logística <b>{selected.commander.logistics}</b></span><span>Iniciativa <b>{selected.commander.initiative}</b></span></div>
+        {selectedSupply && <div className={`supply-line-status ${selectedSupply.state}`}>
+          <span>Linha de suprimento</span>
+          <strong>{selectedSupply.state === 'connected' ? 'Conectada' : selectedSupply.state === 'strained' ? 'Sob pressão' : 'Interrompida'}</strong>
+          <small>{(selectedSupply.efficiency * 100).toFixed(0)}% de eficiência • {Math.round(selectedSupply.distanceKm).toLocaleString('pt-BR')} km até {selectedSupply.sourceLocationId ? (locationNames[selectedSupply.sourceLocationId] ?? selectedSupply.sourceLocationId) : 'nenhuma base segura'}</small>
+        </div>}
         <div className="army-order-actions">
-          <button className={selected.order === 'hold' ? 'active' : ''} onClick={() => setArmyState((state) => setUnitOrder(state, selected.id, 'hold'))}>Manter posição</button>
-          <button className={selected.order === 'prepare' ? 'active' : ''} onClick={() => setArmyState((state) => setUnitOrder(state, selected.id, 'prepare'))}>Preparar</button>
+          <button className={selected.order === 'hold' ? 'active' : ''} disabled={selected.order === 'retreat'} onClick={() => onArmyStateChange(setUnitOrder(armyState, selected.id, 'hold'))}>Manter posição</button>
+          <button className={selected.order === 'prepare' ? 'active' : ''} disabled={selected.order === 'retreat'} onClick={() => onArmyStateChange(setUnitOrder(armyState, selected.id, 'prepare'))}>Preparar</button>
         </div>
         <div className="army-move-row">
-          <select value={destinationId} onChange={(event) => setDestinationId(event.target.value)}>
+          <select value={destinationId} disabled={selected.order === 'retreat'} onChange={(event) => setDestinationId(event.target.value)}>
             {destinations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
-          <button disabled={!destinationId} onClick={() => setArmyState((state) => issueMove(state, selected.id, destinationId))}>Mover formação</button>
+          <button disabled={!destinationId || selected.order === 'retreat'} onClick={() => onArmyStateChange(issueMove(armyState, selected.id, destinationId))}>Mover formação</button>
         </div>
-        {selected.order === 'move' && <div className="movement-progress"><div><span>Deslocamento para {selected.destinationId ? (locationNames[selected.destinationId] ?? selected.destinationId) : 'destino'}</span><b>{selected.movementProgress.toFixed(0)}%</b></div><i><em style={{ width: `${selected.movementProgress}%` }}/></i></div>}
-        <p className="army-note">Movimentos, preparação e desgaste logístico avançam com o relógio principal da campanha. Formações materializadas agora também alimentam o cálculo das frentes: distância, comandante, moral, organização, suprimento e equipamento afetam o poder efetivo.</p>
+        {(selected.order === 'move' || selected.order === 'retreat') && <div className="movement-progress"><div><span>{selected.order === 'retreat' ? 'Retirada para' : 'Deslocamento para'} {selected.destinationId ? (locationNames[selected.destinationId] ?? selected.destinationId) : 'destino'}</span><b>{selected.movementProgress.toFixed(0)}%</b></div><i><em style={{ width: `${selected.movementProgress}%` }}/></i></div>}
+        <p className="army-note">Baixas agora reduzem efetivo, força, moral, organização e equipamento das próprias formações. Se uma posição for ocupada, unidades derrotadas recuam fisicamente para a location segura mais próxima. Linhas de suprimento dependem de bases ainda controladas pela entidade.</p>
       </div>}
     </>}
   </div>;
