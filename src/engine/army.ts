@@ -1,6 +1,6 @@
 import { locationsForEntity, locationsForYear, type ResolvedLocation } from '../data/territories';
 import type { SimulationState } from './simulation';
-import type { WarState } from './war';
+import type { War, WarState } from './war';
 import type { TerritorialControlState } from './territorialControl';
 
 export type UnitType = 'field-army' | 'garrison' | 'mobile-corps';
@@ -241,6 +241,15 @@ function nearestFriendlyRetreat(unit: ArmyUnit, year: number, control?: Territor
   return options[0]?.location;
 }
 
+function assignedFrontIdForUnit(unit: ArmyUnit, war: War, locations: Map<string, ResolvedLocation>) {
+  const current = locations.get(unit.locationId);
+  const ranked = war.fronts
+    .filter((front) => front.locationId)
+    .map((front) => ({ front, distance: distanceKm(current, locations.get(front.locationId!)) }))
+    .sort((a, b) => a.distance - b.distance || a.front.id.localeCompare(b.front.id));
+  return ranked[0]?.front.id;
+}
+
 export function applyBattleConsequences(
   state: ArmyState,
   warState: WarState,
@@ -269,6 +278,7 @@ export function applyBattleConsequences(
         const isAttacker = attackerIds.has(unit.entityId);
         const isDefender = defenderIds.has(unit.entityId);
         if (!isAttacker && !isDefender) return unit;
+        if (assignedFrontIdForUnit(unit, war, locations) !== front.id) return unit;
         const unitLocation = locations.get(unit.locationId);
         const distance = distanceKm(unitLocation, frontLocation);
         if (distance > 1800) return unit;
