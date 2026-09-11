@@ -1,3 +1,4 @@
+import { applyCoalitionDiplomaticConsequences, evaluateCoalitionSettlement, settleCoalitionGoals } from './coalitionGoals';
 import type { SimulationState } from './simulation';
 import type { TerritorialControlState } from './territorialControl';
 import type { War, WarState } from './war';
@@ -9,6 +10,8 @@ export type PeaceEvaluation = {
   acceptance: number;
   leverage: number;
   occupiedLocations: number;
+  coalitionSupport: number;
+  coalitionDissenters: number;
   eligible: boolean;
   reason: string;
 };
@@ -132,6 +135,7 @@ export function evaluatePeaceOffer(
   side: PeaceSide,
   term: PeaceTerm,
   control: TerritorialControlState,
+  simulation?: SimulationState,
 ): PeaceEvaluation {
   const scoreForSide = side === 'attacker' ? war.score : -war.score;
   const ownSupport = side === 'attacker' ? war.attackerSupport : war.defenderSupport;
@@ -147,14 +151,27 @@ export function evaluatePeaceOffer(
     recognition: 61,
   };
   const eligible = term !== 'limited_annexation' || occupied.length > 0;
-  const acceptance = eligible ? clamp(50 + (leverage - threshold[term]) * 1.55, 2, 98) : 0;
-  const reason = !eligible
+  const coalition = simulation
+    ? evaluateCoalitionSettlement(war, side, term, simulation, control)
+    : { support: 100, dissenters: 0, compatible: 0, total: 0, summary: 'Interesses da coalizão ainda não avaliados.' };
+  const coalitionPenalty = Math.max(0, 58 - coalition.support) * 0.32;
+  const acceptance = eligible ? clamp(50 + (leverage - threshold[term]) * 1.55 - coalitionPenalty, 2, 98) : 0;
+  const baseReason = !eligible
     ? 'Nenhuma location inimiga está completamente ocupada; anexação territorial não pode ser exigida.'
     : leverage >= threshold[term]
       ? 'A situação militar e política cria alavancagem suficiente para apresentar estes termos.'
       : 'Os termos excedem a alavancagem atual; a outra parte tende a rejeitar.';
+  const reason = `${baseReason} ${coalition.summary}`;
 
-  return { acceptance, leverage, occupiedLocations: occupied.length, eligible, reason };
+  return {
+    acceptance,
+    leverage,
+    occupiedLocations: occupied.length,
+    coalitionSupport: coalition.support,
+    coalitionDissenters: coalition.dissenters,
+    eligible,
+    reason,
+  };
 }
 
 function deterministicRoll(war: War, term: PeaceTerm, side: PeaceSide) {
@@ -290,7 +307,7 @@ export function resolvePeaceOffer(
     return { accepted: false, message: 'A guerra já não está disponível para negociação.', warState, territorialControl: control, simulation, transferredLocationIds: [] };
   }
 
-  const evaluation = evaluatePeaceOffer(war, side, term, control);
+  const evaluation = evaluatePeaceOffer(war, side, term, control, simulation);
   if (!evaluation.eligible) {
     return { accepted: false, message: evaluation.reason, warState, territorialControl: control, simulation, transferredLocationIds: [] };
   }
@@ -317,19 +334,25 @@ export function resolvePeaceOffer(
   }
   if (term === 'reparations') nextSimulation = applyReparations(simulation, war, side);
 
+  settleCoalitionGoals(war, side, term, nextSimulation, nextControl, transferredLocationIds);
+  nextSimulation = applyCoalitionDiplomaticConsequences(nextSimulation, war, side);
+
   const victor: War['victor'] = side === 'attacker' ? 'attackers' : 'defenders';
   const wars: War[] = warState.wars.map((item) => item.id === war.id ? { ...item, status: 'ended' as const, victor } : item);
-  registerPostWarConsequences(simulation, war, side, term, transferredLocationIds);
+  registerPostWarConsequences(nextSimulation, war, side, term, transferredLocationIds);
   const termLabel: Record<PeaceTerm, string> = {
     status_quo: 'cessar-fogo com restauração do status territorial',
     reparations: 'paz com reparações financeiras',
     limited_annexation: `paz com cessão limitada de ${transferredLocationIds.length} location(s)`,
     recognition: 'paz com reconhecimento político do objetivo negociado',
   };
+  const coalitionSuffix = evaluation.coalitionDissenters > 0
+    ? ` ${evaluation.coalitionDissenters} membro(s) da coalizão consideram o acordo insuficiente e isso afetará confiança e memória diplomática.`
+    : ' A coalizão considera o acordo amplamente compatível com seus objetivos.';
 
   return {
     accepted: true,
-    message: `A outra parte aceitou: ${termLabel[term]}. Uma trégua temporária entrou em vigor; violações futuras terão custo político.`,
+    message: `A outra parte aceitou: ${termLabel[term]}. Uma trégua temporária entrou em vigor; violações futuras terão custo político.${coalitionSuffix}`,
     warState: { ...warState, wars },
     territorialControl: nextControl,
     simulation: nextSimulation,
