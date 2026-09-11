@@ -7,6 +7,7 @@ import type { MobilizationLevel, WarGoal, WarState } from '../engine/war';
 import { CasusBelliPlanner } from './CasusBelliPlanner';
 import { CrisisConferencePanel } from './CrisisConferencePanel';
 import { CoalitionInterestsPanel } from './CoalitionInterestsPanel';
+import { CoalitionPoliticsPanel } from './CoalitionPoliticsPanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -29,6 +30,7 @@ export function StrategicWarConsole(props: Props) {
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
     <CrisisConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
     <CoalitionInterestsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl}/>
+    <CoalitionPoliticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onWarStateChange={props.onWarStateChange}/>
     <WarConsole
       entityId={props.entityId}
       entities={props.entities}
