@@ -191,26 +191,28 @@ export function WorldMap({ selectedName, selectedEntityId, year, entityNames = {
               {temporalLocations.map((location) => {
                 const [x, y] = project([location.lon, location.lat]);
                 const occupation = territorialControl.occupations[location.id];
-                const effectiveController = occupation?.controllerId ?? location.controllerId ?? location.ownerId;
-                const active = effectiveController === selectedEntityId || location.ownerId === selectedEntityId;
-                const ownerName = location.ownerId ? (entityNames[location.ownerId] ?? location.ownerId) : 'Desconhecido';
+                const effectiveOwner = occupation?.ownerId ?? location.ownerId;
+                const effectiveController = occupation?.controllerId ?? location.controllerId ?? effectiveOwner;
+                const active = effectiveController === selectedEntityId || effectiveOwner === selectedEntityId;
+                const ownerName = effectiveOwner ? (entityNames[effectiveOwner] ?? effectiveOwner) : 'Desconhecido';
                 const controllerName = effectiveController ? (entityNames[effectiveController] ?? effectiveController) : ownerName;
                 const occupied = !!occupation && occupation.controllerId !== occupation.ownerId;
                 const contested = !!occupation?.contested;
-                const className = `territory-marker ${active ? 'active' : ''} ${occupied ? 'occupied' : ''} ${contested ? 'contested' : ''}`;
+                const settledByPeace = !!occupation?.warId.startsWith('peace-');
+                const className = `territory-marker ${active ? 'active' : ''} ${occupied ? 'occupied' : ''} ${contested ? 'contested' : ''} ${settledByPeace ? 'peace-settled' : ''}`;
                 return <g
                   key={location.id}
                   className={className}
                   transform={`translate(${x} ${y})`}
                   role="button"
                   tabIndex={0}
-                  onClick={(event) => { event.stopPropagation(); if (location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name); }}
-                  onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name); }}
+                  onClick={(event) => { event.stopPropagation(); if (effectiveOwner && onSelectTerritory) onSelectTerritory(effectiveOwner, location.name); }}
+                  onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && effectiveOwner && onSelectTerritory) onSelectTerritory(effectiveOwner, location.name); }}
                 >
                   <circle r={active ? 5.5 : 4} />
                   <circle className="marker-ring" r={active ? 9 : 7} />
                   {occupation && occupation.progress > 0 && <circle className="occupation-ring" r={11} pathLength={100} strokeDasharray={`${occupation.progress} 100`} transform="rotate(-90)" />}
-                  <title>{location.name} • soberania: {ownerName} • controle: {controllerName}{occupation ? ` • ocupação ${occupation.progress.toFixed(0)}% • batalhas ${occupation.battleCount}` : ''} • confiança ${location.confidence}</title>
+                  <title>{location.name} • soberania: {ownerName} • controle: {controllerName}{occupation?.warId.startsWith('peace-') ? ' • soberania alterada por acordo de paz' : occupation ? ` • ocupação ${occupation.progress.toFixed(0)}% • batalhas ${occupation.battleCount}` : ''} • confiança ${location.confidence}</title>
                 </g>;
               })}
             </g>
