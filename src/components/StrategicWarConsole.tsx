@@ -18,6 +18,7 @@ import { JointOrganizationForcesPanel } from './JointOrganizationForcesPanel';
 import { MultinationalTheaterCommandPanel } from './MultinationalTheaterCommandPanel';
 import { OperationalCampaignPlansPanel } from './OperationalCampaignPlansPanel';
 import { MilitaryIntelligencePanel } from './MilitaryIntelligencePanel';
+import { InformationWarfarePanel } from './InformationWarfarePanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -42,6 +43,7 @@ export function StrategicWarConsole(props: Props) {
     <OrganizationObligationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
     <JointOrganizationForcesPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <MultinationalTheaterCommandPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
+    <InformationWarfarePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
     <MilitaryIntelligencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState}/>
     <OperationalCampaignPlansPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
