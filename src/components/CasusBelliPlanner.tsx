@@ -24,6 +24,7 @@ import {
 } from '../engine/crisis';
 import { activeTruceBetween } from '../engine/peace';
 import type { WarGoal } from '../engine/war';
+import './crisis.css';
 
 const goalLabels: Record<WarGoal, string> = {
   territory: 'Território / fronteira',
