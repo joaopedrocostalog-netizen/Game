@@ -1,9 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { ScenarioEntity } from '../data/scenarios';
 import type { SimulationState } from '../engine/simulation';
 import type { TerritorialControlState } from '../engine/territorialControl';
 import type { ArmyState } from '../engine/army';
-import { evaluatePeaceOffer, resolvePeaceOffer, type PeaceTerm } from '../engine/peace';
+import {
+  activeTruceBetween,
+  claimsForEntity,
+  evaluatePeaceOffer,
+  postWarState,
+  resetPostWarState,
+  resolvePeaceOffer,
+  revanchismForEntity,
+  type PeaceTerm,
+} from '../engine/peace';
 import {
   type FrontOrder,
   type FrontPriority,
@@ -68,12 +77,30 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
   const [assignmentDraft, setAssignmentDraft] = useState<Record<string, string>>({});
   const [peaceDraft, setPeaceDraft] = useState<Record<string, PeaceTerm>>({});
   const [peaceMessage, setPeaceMessage] = useState<Record<string, string>>({});
+  const [postWarRevision, setPostWarRevision] = useState(0);
   const names = useMemo(() => Object.fromEntries(entities.map((item) => [item.id, item.name])), [entities]);
   const wars = warsForEntity(warState, entityId);
   const mobilization = warState.mobilization[entityId] ?? 'none';
   const runtime = simulation.entities[entityId];
   const controlledLocations = Object.values(territorialControl.occupations).filter((item) => item.controllerId === entityId && item.ownerId !== entityId).length;
   const ownUnits = armyState.units.filter((unit) => unit.entityId === entityId);
+  const truceWithTarget = targetId ? activeTruceBetween(entityId, targetId, simulation.elapsedDays) : undefined;
+  const entityClaims = claimsForEntity(entityId);
+  const revanchism = revanchismForEntity(entityId, simulation.elapsedDays);
+  const postWar = postWarState();
+  const entityPeaceHistory = postWar.peaceHistory.filter((memory) => memory.parties.includes(entityId)).slice(0, 4);
+
+  useEffect(() => {
+    const listener = () => setPostWarRevision((value) => value + 1);
+    window.addEventListener('world-state-postwar', listener);
+    return () => window.removeEventListener('world-state-postwar', listener);
+  }, []);
+
+  useEffect(() => {
+    if (simulation.elapsedDays === 0 && warState.wars.length === 0) resetPostWarState();
+  }, [simulation.date.year]);
+
+  void postWarRevision;
 
   function sideForWar(war: WarState['wars'][number]): FrontSide | null {
     if (war.attackers.includes(entityId)) return 'attacker';
@@ -105,7 +132,7 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
     <div className="war-readiness-grid">
       <div><span>Mobilização</span><strong>{mobilization === 'general' ? 'Geral' : mobilization === 'partial' ? 'Parcial' : 'Normal'}</strong></div>
       <div><span>Prontidão</span><strong>{runtime ? runtime.militaryReadiness.toFixed(1) : '—'}</strong></div>
-      <div><span>Controle ocupado</span><strong>{controlledLocations}</strong></div>
+      <div><span>Revanchismo</span><strong>{revanchism.toFixed(0)}%</strong></div>
     </div>
     <div className="war-mobilization-actions">
       <button className={mobilization === 'none' ? 'active' : ''} onClick={() => onMobilize('none')}>Normal</button>
@@ -116,9 +143,15 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
       <div className="context-kicker">Planejar conflito</div>
       <select value={targetId} onChange={(event) => setTargetId(event.target.value)}>{targets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select value={goal} onChange={(event) => setGoal(event.target.value as WarGoal)}>{Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-      <button className="declare-war" disabled={!targetId} onClick={() => targetId && onDeclareWar(targetId, goal)}>Declarar guerra</button>
-      <p>Prioridade decide onde concentrar recursos. Ordem operacional decide como a frente luta: cautela, defesa, ofensiva, ruptura, reserva ou retirada.</p>
+      <button className="declare-war" disabled={!targetId || !!truceWithTarget} onClick={() => targetId && !truceWithTarget && onDeclareWar(targetId, goal)}>Declarar guerra</button>
+      {truceWithTarget ? <div className="truce-warning"><b>Trégua em vigor</b><span>{Math.max(0, truceWithTarget.expiresAtElapsedDay - simulation.elapsedDays)} dias restantes com {names[targetId] ?? targetId}. Nova guerra bloqueada enquanto o acordo vigorar.</span></div> : <p>Prioridade decide onde concentrar recursos. Ordem operacional decide como a frente luta: cautela, defesa, ofensiva, ruptura, reserva ou retirada.</p>}
     </div>
+    {(entityClaims.length > 0 || entityPeaceHistory.length > 0) && <div className="postwar-box">
+      <div className="context-kicker">Pós-guerra e memória estratégica</div>
+      <div className="postwar-summary"><span>Reivindicações ativas <b>{entityClaims.length}</b></span><span>Revanchismo <b>{revanchism.toFixed(0)}%</b></span><span>Territórios ocupados <b>{controlledLocations}</b></span></div>
+      {entityClaims.length > 0 && <div className="claim-list">{entityClaims.slice(0, 5).map((claim) => <div key={claim.id}><b>{claim.locationId}</b><span>detido por {names[claim.holderId] ?? claim.holderId} • força da reivindicação {claim.strength.toFixed(0)}%</span></div>)}</div>}
+      {entityPeaceHistory.length > 0 && <div className="peace-memory-list">{entityPeaceHistory.map((memory) => <div key={memory.id}><span>Tratado após {memory.warId}</span><b>{peaceLabels[memory.term]}</b></div>)}</div>}
+    </div>}
     <div className="war-list">
       <div className="context-kicker">Conflitos da entidade</div>
       {wars.length === 0 ? <div className="war-empty">Nenhum conflito armado registrado para esta entidade.</div> : wars.slice(0, 5).map((war) => {
