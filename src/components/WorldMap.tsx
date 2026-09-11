@@ -16,6 +16,17 @@ type Feature = {
 
 type FeatureCollection = { type: 'FeatureCollection'; features: Feature[] };
 
+type ArmyMarker = {
+  id: string;
+  entityId: string;
+  name: string;
+  locationId: string;
+  destinationId?: string;
+  movementProgress: number;
+  strength: number;
+  order: string;
+};
+
 type Props = {
   selectedName?: string;
   selectedEntityId?: string;
@@ -71,6 +82,7 @@ export function WorldMap({
   const [error, setError] = useState('');
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [armyMarkers, setArmyMarkers] = useState<ArmyMarker[]>([]);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const effectiveYear = year ?? (historicalLayerReady ? 2026 : 1500);
 
@@ -86,8 +98,20 @@ export function WorldMap({
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const custom = event as CustomEvent<{ entityId: string; markers: ArmyMarker[] }>;
+      if (custom.detail?.entityId === selectedEntityId) setArmyMarkers(custom.detail.markers ?? []);
+    };
+    window.addEventListener('world-state-armies', listener);
+    return () => window.removeEventListener('world-state-armies', listener);
+  }, [selectedEntityId]);
+
+  useEffect(() => { setArmyMarkers([]); }, [selectedEntityId, effectiveYear]);
+
   const features = useMemo(() => data?.features ?? [], [data]);
   const temporalLocations = useMemo(() => locationsForYear(effectiveYear), [effectiveYear]);
+  const locationById = useMemo(() => Object.fromEntries(temporalLocations.map((location) => [location.id, location])), [temporalLocations]);
   const historicalAreas = useMemo(() => historicalLayerReady ? [] : areasForYear(effectiveYear), [effectiveYear, historicalLayerReady]);
 
   function countryName(feature: Feature) {
@@ -200,6 +224,26 @@ export function WorldMap({
                     <title>{location.name} • {ownerName} • confiança {location.confidence}</title>
                   </g>
                 );
+              })}
+            </g>
+
+            <g className="army-map-layer" aria-label="Formações militares da entidade selecionada">
+              {armyMarkers.map((army) => {
+                const origin = locationById[army.locationId];
+                if (!origin) return null;
+                const destination = army.destinationId ? locationById[army.destinationId] : undefined;
+                const [ox, oy] = project([origin.lon, origin.lat]);
+                const [dx, dy] = destination ? project([destination.lon, destination.lat]) : [ox, oy];
+                const ratio = Math.max(0, Math.min(1, army.movementProgress / 100));
+                const x = ox + (dx - ox) * ratio;
+                const y = oy + (dy - oy) * ratio;
+                return <g key={army.id} className={`army-map-marker ${army.order === 'move' ? 'moving' : ''}`} transform={`translate(${x} ${y})`}>
+                  {destination && <line className="army-route" x1={ox - x} y1={oy - y} x2={dx - x} y2={dy - y} />}
+                  <rect x={-8} y={-6} width={16} height={12} rx={3} />
+                  <text x={0} y={2.8} textAnchor="middle">⚔</text>
+                  <circle className="army-strength-ring" r={10} />
+                  <title>{army.name} • força {army.strength.toFixed(0)}%{destination ? ` • deslocando para ${destination.name}` : ` • ${origin.name}`}</title>
+                </g>;
               })}
             </g>
           </g>
