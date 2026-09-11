@@ -20,8 +20,9 @@ type Props = {
   simulation: SimulationState;
   warState: WarState;
   territorialControl: TerritorialControlState;
-  onTerritorialControlChange: (state: TerritorialControlState) => void;
 };
+
+type ControlGlobal = typeof globalThis & { __WORLD_STATE_TERRITORIAL_CONTROL__?: TerritorialControlState };
 
 const rewardLabels: Record<CoalitionRewardType, string> = {
   territory: 'Território',
@@ -30,7 +31,7 @@ const rewardLabels: Record<CoalitionRewardType, string> = {
   security: 'Garantia de segurança',
 };
 
-export function PostWarConferencePanel({ entityId, entities, simulation, warState, territorialControl, onTerritorialControlChange }: Props) {
+export function PostWarConferencePanel({ entityId, entities, simulation, warState, territorialControl }: Props) {
   const [revision, setRevision] = useState(0);
   const [memberDraft, setMemberDraft] = useState<Record<string, string>>({});
   const [rewardDraft, setRewardDraft] = useState<Record<string, CoalitionRewardType>>({});
@@ -62,6 +63,14 @@ export function PostWarConferencePanel({ entityId, entities, simulation, warStat
     simulation.events.splice(0, simulation.events.length, ...next.events);
   }
 
+  function publishTerritorialControl(next: TerritorialControlState) {
+    Object.keys(territorialControl.occupations).forEach((key) => delete territorialControl.occupations[key]);
+    Object.assign(territorialControl.occupations, next.occupations);
+    const published: TerritorialControlState = { ...territorialControl, occupations: { ...territorialControl.occupations }, battles: [...territorialControl.battles] };
+    (globalThis as ControlGlobal).__WORLD_STATE_TERRITORIAL_CONTROL__ = published;
+    window.dispatchEvent(new CustomEvent('world-state-territorial-control', { detail: published }));
+  }
+
   function open(warId: string) {
     const war = warState.wars.find((item) => item.id === warId);
     if (!war) return;
@@ -71,14 +80,14 @@ export function PostWarConferencePanel({ entityId, entities, simulation, warStat
   }
 
   function allocate(warId: string, conferenceId: string) {
-    const memberId = memberDraft[warId];
+    const memberId = memberDraft[warId] ?? postWarConferences().find((item) => item.id === conferenceId)?.participantIds[0];
     const type = rewardDraft[warId] ?? 'reparations';
     const locationId = locationDraft[warId];
     if (!memberId) return;
     const result = allocateConferenceReward(conferenceId, memberId, type, simulation, territorialControl, type === 'territory' ? locationId : undefined);
     if (result.accepted) {
       applySimulationSnapshot(result.simulation);
-      onTerritorialControlChange(result.territorialControl);
+      publishTerritorialControl(result.territorialControl);
     }
     setMessage((current) => ({ ...current, [warId]: result.message }));
     setRevision((value) => value + 1);
