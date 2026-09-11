@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import type { ScenarioEntity } from '../data/scenarios';
 import { coalitionCohesion, coalitionGoalsForWar } from '../engine/coalitionGoals';
 import type { SimulationState } from '../engine/simulation';
@@ -21,21 +21,8 @@ function statusLabel(status: 'active' | 'satisfied' | 'frustrated') {
 }
 
 export function CoalitionInterestsPanel({ entityId, entities, simulation, warState, territorialControl }: Props) {
-  const [revision, setRevision] = useState(0);
   const names = useMemo(() => Object.fromEntries(entities.map((entity) => [entity.id, entity.name])), [entities]);
   const wars = warState.wars.filter((war) => war.attackers.includes(entityId) || war.defenders.includes(entityId)).slice(0, 4);
-
-  useEffect(() => {
-    const refresh = () => setRevision((value) => value + 1);
-    window.addEventListener('world-state-coalition-goals', refresh);
-    window.addEventListener('world-state-territorial-control', refresh);
-    return () => {
-      window.removeEventListener('world-state-coalition-goals', refresh);
-      window.removeEventListener('world-state-territorial-control', refresh);
-    };
-  }, []);
-
-  void revision;
   if (!wars.length) return null;
 
   return <div className="coalition-interests-panel">
