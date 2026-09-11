@@ -192,8 +192,8 @@ export function resolvePeaceOffer(
   }
   if (term === 'reparations') nextSimulation = applyReparations(simulation, war, side);
 
-  const victor = side === 'attacker' ? 'attackers' : 'defenders';
-  const wars = warState.wars.map((item) => item.id === war.id ? { ...item, status: 'ended' as const, victor } : item);
+  const victor: War['victor'] = side === 'attacker' ? 'attackers' : 'defenders';
+  const wars: War[] = warState.wars.map((item) => item.id === war.id ? { ...item, status: 'ended' as const, victor } : item);
   const termLabel: Record<PeaceTerm, string> = {
     status_quo: 'cessar-fogo com restauração do status territorial',
     reparations: 'paz com reparações financeiras',
