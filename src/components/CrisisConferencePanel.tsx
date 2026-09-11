@@ -105,7 +105,7 @@ export function CrisisConferencePanel({ entityId, entities, simulation, warState
   }
 
   function openConference() {
-    if (!chairId || crisis.status !== 'active') return;
+    if (!crisis || !chairId || crisis.status !== 'active') return;
     const result = conveneConference(crisis, chairId, simulation);
     if (!result) return;
     setMessage(`${entities.find((item) => item.id === chairId)?.name ?? chairId} assumiu a presidência de uma conferência internacional. O prazo da crise foi ampliado para negociação.`);
@@ -113,7 +113,7 @@ export function CrisisConferencePanel({ entityId, entities, simulation, warState
   }
 
   function submitConferenceTerm() {
-    if (!conference || conference.status !== 'open') return;
+    if (!crisis || !conference || conference.status !== 'open') return;
     const result = resolveConferenceProposal(crisis.id, simulation, term);
     if (!result) return;
     applySimulationSnapshot(result.simulation);
@@ -123,7 +123,7 @@ export function CrisisConferencePanel({ entityId, entities, simulation, warState
   }
 
   function requestCommitment() {
-    if (!intervenerId || !side) return;
+    if (!crisis || !intervenerId || !side) return;
     const result = requestFormalIntervention(crisis.id, intervenerId, side, kind, simulation);
     const name = entities.find((item) => item.id === intervenerId)?.name ?? intervenerId;
     setMessage(`${name}: ${result.message}`);
