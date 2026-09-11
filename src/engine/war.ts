@@ -12,6 +12,7 @@ export type WarGoal = 'territory' | 'reparations' | 'regime' | 'independence' | 
 export type WarStatus = 'active' | 'ended';
 export type FrontPriority = 'low' | 'normal' | 'high' | 'main';
 export type FrontSide = 'attacker' | 'defender';
+export type FrontOrder = 'defend' | 'cautious' | 'offensive' | 'breakthrough' | 'reserve' | 'withdraw';
 
 export type FrontState = {
   id: string;
@@ -31,6 +32,10 @@ export type FrontState = {
   defenderPriority: FrontPriority;
   attackerPriorityManual?: boolean;
   defenderPriorityManual?: boolean;
+  attackerOrder: FrontOrder;
+  defenderOrder: FrontOrder;
+  attackerOrderManual?: boolean;
+  defenderOrderManual?: boolean;
   attackerAssignments: string[];
   defenderAssignments: string[];
 };
@@ -107,6 +112,18 @@ export function setFrontPriority(state: WarState, warId: string, frontId: string
       fronts: war.fronts.map((front) => front.id !== frontId ? front : side === 'attacker'
         ? { ...front, attackerPriority: priority, attackerPriorityManual: true }
         : { ...front, defenderPriority: priority, defenderPriorityManual: true }),
+    }),
+  };
+}
+
+export function setFrontOrder(state: WarState, warId: string, frontId: string, side: FrontSide, order: FrontOrder): WarState {
+  return {
+    ...state,
+    wars: state.wars.map((war) => war.id !== warId ? war : {
+      ...war,
+      fronts: war.fronts.map((front) => front.id !== frontId ? front : side === 'attacker'
+        ? { ...front, attackerOrder: order, attackerOrderManual: true }
+        : { ...front, defenderOrder: order, defenderOrderManual: true }),
     }),
   };
 }
@@ -220,7 +237,64 @@ function frontPriority(front: FrontState, side: FrontSide) {
   return side === 'attacker' ? front.attackerPriority : front.defenderPriority;
 }
 
-function unitCombatPower(unit: ArmyUnit, frontLocation: ResolvedLocation | undefined, locations: Map<string, ResolvedLocation>, side: FrontSide, priority: FrontPriority) {
+function frontOrder(front: FrontState, side: FrontSide) {
+  return side === 'attacker' ? front.attackerOrder : front.defenderOrder;
+}
+
+function orderPowerMultiplier(order: FrontOrder, side: FrontSide) {
+  if (order === 'defend') return side === 'defender' ? 1.16 : 0.8;
+  if (order === 'cautious') return side === 'defender' ? 1.03 : 0.95;
+  if (order === 'offensive') return 1.1;
+  if (order === 'breakthrough') return side === 'attacker' ? 1.26 : 1.06;
+  if (order === 'reserve') return 0.62;
+  return 0.44;
+}
+
+function orderLogisticsMultiplier(order: FrontOrder) {
+  if (order === 'defend') return 1.04;
+  if (order === 'cautious') return 1.08;
+  if (order === 'offensive') return 0.91;
+  if (order === 'breakthrough') return 0.76;
+  if (order === 'reserve') return 1.12;
+  return 0.86;
+}
+
+function orderLossMultiplier(order: FrontOrder, side: FrontSide) {
+  if (order === 'defend') return side === 'defender' ? 0.76 : 0.94;
+  if (order === 'cautious') return 0.82;
+  if (order === 'offensive') return 1.16;
+  if (order === 'breakthrough') return 1.42;
+  if (order === 'reserve') return 0.55;
+  return 0.7;
+}
+
+function orderIntensityMultiplier(order: FrontOrder) {
+  if (order === 'defend') return 0.88;
+  if (order === 'cautious') return 0.76;
+  if (order === 'offensive') return 1.12;
+  if (order === 'breakthrough') return 1.34;
+  if (order === 'reserve') return 0.5;
+  return 0.58;
+}
+
+function orderProgressBias(order: FrontOrder, side: FrontSide) {
+  if (side === 'attacker') {
+    if (order === 'defend') return -1.5;
+    if (order === 'cautious') return 0.15;
+    if (order === 'offensive') return 1.05;
+    if (order === 'breakthrough') return 2.2;
+    if (order === 'reserve') return -1.1;
+    return -3.1;
+  }
+  if (order === 'defend') return -1.6;
+  if (order === 'cautious') return -0.7;
+  if (order === 'offensive') return 0.25;
+  if (order === 'breakthrough') return 0.75;
+  if (order === 'reserve') return 0.6;
+  return 2.6;
+}
+
+function unitCombatPower(unit: ArmyUnit, frontLocation: ResolvedLocation | undefined, locations: Map<string, ResolvedLocation>, side: FrontSide, priority: FrontPriority, operation: FrontOrder) {
   const currentLocation = locations.get(unit.locationId);
   const distanceFactor = distanceMultiplier(distanceKm(currentLocation, frontLocation));
   const readiness = (unit.strength * 0.22 + unit.morale * 0.17 + unit.organization * 0.2 + unit.supply * 0.18 + unit.equipment * 0.23) / 100;
@@ -229,10 +303,10 @@ function unitCombatPower(unit: ArmyUnit, frontLocation: ResolvedLocation | undef
   const commanderLogistics = clamp(unit.commander.logistics / 100, 0, 1);
   const commanderInitiative = clamp(unit.commander.initiative / 100, 0, 1);
   const commanderFactor = 0.88 + commanderSkill * 0.25 + commanderLogistics * 0.12 + commanderInitiative * 0.1;
-  const orderFactor = unit.order === 'prepare' ? 1.08 : unit.order === 'move' ? 0.76 : unit.order === 'retreat' ? 0.52 : 1;
+  const unitOrderFactor = unit.order === 'prepare' ? 1.08 : unit.order === 'move' ? 0.76 : unit.order === 'retreat' ? 0.52 : 1;
   const terrain = terrainMultiplier(frontLocation?.terrain, side);
-  const power = 20 * personnelFactor * readiness * commanderFactor * orderFactor * distanceFactor * terrain * priorityMultiplier(priority);
-  const logistics = clamp((unit.supply * 0.48 + unit.organization * 0.22 + unit.equipment * 0.2 + unit.commander.logistics * 0.1) * distanceFactor, 0, 100);
+  const power = 20 * personnelFactor * readiness * commanderFactor * unitOrderFactor * distanceFactor * terrain * priorityMultiplier(priority) * orderPowerMultiplier(operation, side);
+  const logistics = clamp((unit.supply * 0.48 + unit.organization * 0.22 + unit.equipment * 0.2 + unit.commander.logistics * 0.1) * distanceFactor * orderLogisticsMultiplier(operation), 0, 100);
   return { power, logistics };
 }
 
@@ -271,6 +345,7 @@ function coalitionPower(simulation: SimulationState, warState: WarState, members
   let power = 0, formations = 0, logisticsTotal = 0, logisticsSources = 0;
   let operationalData = false;
   const priority = frontPriority(front, side);
+  const operation = frontOrder(front, side);
 
   for (const id of members) {
     const units = armyState?.units.filter((unit) => unit.entityId === id) ?? [];
@@ -279,7 +354,7 @@ function coalitionPower(simulation: SimulationState, warState: WarState, members
       const mobilization = mobilizationMultiplier(warState.mobilization[id]);
       const assigned = units.filter((unit) => unitAssignedToFront(unit, front, allFronts, locations, side));
       for (const unit of assigned) {
-        const contribution = unitCombatPower(unit, target, locations, side, priority);
+        const contribution = unitCombatPower(unit, target, locations, side, priority, operation);
         power += contribution.power * mobilization;
         logisticsTotal += contribution.logistics;
         logisticsSources += 1;
@@ -288,8 +363,8 @@ function coalitionPower(simulation: SimulationState, warState: WarState, members
     } else {
       const fallback = aggregateNationalPower(simulation, warState, id, side, front.terrain);
       const weights = allFronts.reduce((sum, item) => sum + priorityMultiplier(frontPriority(item, side)), 0);
-      power += fallback.power * priorityMultiplier(priority) / Math.max(1, weights);
-      logisticsTotal += fallback.logistics;
+      power += fallback.power * priorityMultiplier(priority) * orderPowerMultiplier(operation, side) / Math.max(1, weights);
+      logisticsTotal += fallback.logistics * orderLogisticsMultiplier(operation);
       logisticsSources += 1;
     }
   }
@@ -313,6 +388,8 @@ function makeFront(warId: string, index: number, location?: ResolvedLocation): F
     operationalData: false,
     attackerPriority: index === 0 ? 'main' : 'normal',
     defenderPriority: index === 0 ? 'main' : 'normal',
+    attackerOrder: 'cautious',
+    defenderOrder: 'defend',
     attackerAssignments: [],
     defenderAssignments: [],
   };
@@ -351,6 +428,23 @@ function autoPriority(front: FrontState, side: FrontSide, control: TerritorialCo
   return 'normal';
 }
 
+function autoOrder(front: FrontState, side: FrontSide, control: TerritorialControlState): FrontOrder {
+  const occupation = front.locationId ? control.occupations[front.locationId] : undefined;
+  const occupationProgress = occupation?.progress ?? 0;
+  if (side === 'attacker') {
+    if (front.attackerLogistics > 58 && front.attackerPower > front.defenderPower * 1.35 && occupationProgress >= 45) return 'breakthrough';
+    if (front.attackerLogistics > 44 && front.attackerPower > front.defenderPower * 1.08) return 'offensive';
+    if (front.attackerLogistics < 24 || front.attackerPower < front.defenderPower * 0.55) return 'reserve';
+    if (front.attackerPower < front.defenderPower * 0.82) return 'cautious';
+    return 'cautious';
+  }
+  if (occupationProgress >= 82 && front.defenderPower < front.attackerPower * 0.55) return 'withdraw';
+  if (front.defenderLogistics < 24 && occupationProgress < 45) return 'reserve';
+  if (front.defenderPower > front.attackerPower * 1.35 && front.defenderLogistics > 48) return 'offensive';
+  if (occupationProgress >= 50 || front.attackerPower > front.defenderPower) return 'defend';
+  return 'cautious';
+}
+
 function evolveFrontNetwork(war: War, simulation: SimulationState, control: TerritorialControlState): FrontState[] {
   const locations = locationMap(simulation.date.year);
   const blocked = new Set(war.fronts.map((front) => front.locationId).filter(Boolean) as string[]);
@@ -364,7 +458,21 @@ function evolveFrontNetwork(war: War, simulation: SimulationState, control: Terr
         if (target) {
           blocked.delete(front.locationId);
           blocked.add(target.id);
-          nextFront = { ...makeFront(war.id, index, target), id: front.id, intensity: 28, attackerAssignments: front.attackerAssignments, defenderAssignments: front.defenderAssignments, attackerPriorityManual: front.attackerPriorityManual, defenderPriorityManual: front.defenderPriorityManual, attackerPriority: front.attackerPriority, defenderPriority: front.defenderPriority };
+          nextFront = {
+            ...makeFront(war.id, index, target),
+            id: front.id,
+            intensity: 28,
+            attackerAssignments: front.attackerAssignments,
+            defenderAssignments: front.defenderAssignments,
+            attackerPriorityManual: front.attackerPriorityManual,
+            defenderPriorityManual: front.defenderPriorityManual,
+            attackerPriority: front.attackerPriority,
+            defenderPriority: front.defenderPriority,
+            attackerOrderManual: front.attackerOrderManual,
+            defenderOrderManual: front.defenderOrderManual,
+            attackerOrder: front.attackerOrder,
+            defenderOrder: front.defenderOrder,
+          };
         }
       }
     }
@@ -372,6 +480,8 @@ function evolveFrontNetwork(war: War, simulation: SimulationState, control: Terr
       ...nextFront,
       attackerPriority: nextFront.attackerPriorityManual ? nextFront.attackerPriority : autoPriority(nextFront, 'attacker', control),
       defenderPriority: nextFront.defenderPriorityManual ? nextFront.defenderPriority : autoPriority(nextFront, 'defender', control),
+      attackerOrder: nextFront.attackerOrderManual ? nextFront.attackerOrder : autoOrder(nextFront, 'attacker', control),
+      defenderOrder: nextFront.defenderOrderManual ? nextFront.defenderOrder : autoOrder(nextFront, 'defender', control),
     };
   });
 
@@ -428,11 +538,14 @@ function resolveFront(war: War, front: FrontState, allFronts: FrontState[], stat
   const logisticsEdge = (attackers.logistics - defenders.logistics) / 100;
   const random = dailyNoise(war, simulation, front.id);
   const scale = Math.max(0.25, days / 7);
+  const attackerOrder = front.attackerOrder;
+  const defenderOrder = front.defenderOrder;
+  const orderIntensity = (orderIntensityMultiplier(attackerOrder) + orderIntensityMultiplier(defenderOrder)) / 2;
   const scoreDelta = (edge * 1.7 + logisticsEdge * 0.32 + random * 0.2) * scale;
-  const intensity = clamp(36 + Math.abs(edge) * 38 + Math.min(14, (attackers.formations + defenders.formations) * 2) + random * 9, 14, 96);
-  const attackerLossDelta = Math.max(0, (defenderPower / attackerPower) * intensity * days * 0.009 * (1.08 - attackers.logistics / 220));
-  const defenderLossDelta = Math.max(0, (attackerPower / defenderPower) * intensity * days * 0.009 * (1.08 - defenders.logistics / 220));
-  const progressDelta = (edge * 7 + logisticsEdge * 2.3 + random * 0.7) * scale;
+  const intensity = clamp((36 + Math.abs(edge) * 38 + Math.min(14, (attackers.formations + defenders.formations) * 2) + random * 9) * orderIntensity, 8, 98);
+  const attackerLossDelta = Math.max(0, (defenderPower / attackerPower) * intensity * days * 0.009 * (1.08 - attackers.logistics / 220) * orderLossMultiplier(attackerOrder, 'attacker'));
+  const defenderLossDelta = Math.max(0, (attackerPower / defenderPower) * intensity * days * 0.009 * (1.08 - defenders.logistics / 220) * orderLossMultiplier(defenderOrder, 'defender'));
+  const progressDelta = ((edge * 7 + logisticsEdge * 2.3 + random * 0.7) + orderProgressBias(attackerOrder, 'attacker') + orderProgressBias(defenderOrder, 'defender')) * scale;
   return { front: { ...front, progress: clamp(front.progress + progressDelta, 2, 98), intensity, attackerPower, defenderPower, attackerFormations: attackers.formations, defenderFormations: defenders.formations, attackerLogistics: attackers.logistics, defenderLogistics: defenders.logistics, operationalData: attackers.operationalData || defenders.operationalData }, scoreDelta, attackerLossDelta, defenderLossDelta };
 }
 
