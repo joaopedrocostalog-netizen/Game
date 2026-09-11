@@ -11,10 +11,15 @@
 .territory-marker{pointer-events:auto;cursor:pointer;outline:none}
 .territory-marker>circle:first-child{fill:#d7dde5;stroke:#111820;stroke-width:1.2;vector-effect:non-scaling-stroke;transition:r .14s ease,fill .14s ease}
 .territory-marker .marker-ring{fill:none;stroke:#d7dde5;stroke-width:.8;opacity:.28;vector-effect:non-scaling-stroke;transition:opacity .14s ease,r .14s ease}
+.territory-marker .occupation-ring{fill:none;stroke:#ff9e4a;stroke-width:2;opacity:.9;vector-effect:non-scaling-stroke;stroke-linecap:round}
 .territory-marker:hover>circle:first-child,.territory-marker:focus-visible>circle:first-child{fill:#ffffff}
 .territory-marker:hover .marker-ring,.territory-marker:focus-visible .marker-ring{opacity:.65}
 .territory-marker.active>circle:first-child{fill:#d92f43;stroke:#f5b4bd}
 .territory-marker.active .marker-ring{stroke:#d92f43;opacity:.72}
+.territory-marker.contested>circle:first-child{fill:#d19a39;stroke:#ffe0a6}
+.territory-marker.contested .marker-ring{stroke:#ffb75d;opacity:.82;stroke-dasharray:2 2;animation:controlPulse 1.35s ease-in-out infinite}
+.territory-marker.occupied>circle:first-child{fill:#8d2630;stroke:#ff7d87}
+.territory-marker.occupied .marker-ring{stroke:#ff5b68;opacity:1;stroke-width:1.5}
 .army-map-layer{pointer-events:none}
 .army-map-marker rect{fill:#161b22;stroke:#ff7a83;stroke-width:1.1;vector-effect:non-scaling-stroke}
 .army-map-marker text{font-size:7px;fill:#fff;user-select:none}
@@ -22,3 +27,4 @@
 .army-map-marker.moving .army-strength-ring{stroke-dasharray:3 2;opacity:.85;animation:armyPulse 1.2s ease-in-out infinite}
 .army-route{stroke:#ff6b75;stroke-width:1;stroke-dasharray:5 4;opacity:.62;vector-effect:non-scaling-stroke}
 @keyframes armyPulse{0%,100%{r:10;opacity:.45}50%{r:13;opacity:.9}}
+@keyframes controlPulse{0%,100%{opacity:.45}50%{opacity:1}}
