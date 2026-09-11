@@ -59,6 +59,20 @@ export function ArmyOperations({ entityId, year, simulation, warState }: Props) 
     if (!destinationId && owned[0]) setDestinationId(owned[0].id);
   }, [destinationId, owned]);
 
+  useEffect(() => {
+    const markers = units.map((unit) => ({
+      id: unit.id,
+      entityId: unit.entityId,
+      name: unit.name,
+      locationId: unit.locationId,
+      destinationId: unit.destinationId,
+      movementProgress: unit.movementProgress,
+      strength: unit.strength,
+      order: unit.order,
+    }));
+    window.dispatchEvent(new CustomEvent('world-state-armies', { detail: { entityId, markers } }));
+  }, [entityId, units]);
+
   const logistics = logisticsScore(armyState, entityId);
   const selected = units.find((item) => item.id === selectedUnitId);
 
