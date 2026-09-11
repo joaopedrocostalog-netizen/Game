@@ -1,8 +1,10 @@
-import { locationsForEntity, locationsForYear } from '../data/territories';
+import { locationsForEntity, locationsForYear, type ResolvedLocation } from '../data/territories';
 import type { SimulationState } from './simulation';
+import type { WarState } from './war';
+import type { TerritorialControlState } from './territorialControl';
 
 export type UnitType = 'field-army' | 'garrison' | 'mobile-corps';
-export type UnitOrder = 'hold' | 'move' | 'prepare';
+export type UnitOrder = 'hold' | 'move' | 'prepare' | 'retreat';
 
 export type Commander = {
   id: string;
@@ -35,6 +37,13 @@ export type ArmyState = {
   lastElapsedDay: number;
 };
 
+export type SupplyLineStatus = {
+  sourceLocationId?: string;
+  distanceKm: number;
+  efficiency: number;
+  state: 'connected' | 'strained' | 'broken';
+};
+
 function clamp(value: number, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
 }
@@ -54,6 +63,18 @@ function commander(entityId: string, index: number): Commander {
     logistics: 38 + ((seed >> 5) % 40),
     initiative: 36 + ((seed >> 10) % 43),
   };
+}
+
+function distanceKm(a?: ResolvedLocation, b?: ResolvedLocation) {
+  if (!a || !b) return 9999;
+  const radius = 6371;
+  const toRad = (value: number) => value * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const hav = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
 }
 
 export function createInitialArmyState(): ArmyState {
@@ -91,8 +112,7 @@ export function ensureEntityForces(state: ArmyState, simulation: SimulationState
 }
 
 export function issueMove(state: ArmyState, unitId: string, destinationId: string): ArmyState {
-  const valid = locationsForYear(9999).some((location) => location.id === destinationId) || destinationId.length > 0;
-  if (!valid) return state;
+  if (!destinationId) return state;
   return {
     ...state,
     units: state.units.map((unit) => unit.id === unitId ? { ...unit, destinationId, order: 'move', movementProgress: 0 } : unit),
@@ -102,11 +122,49 @@ export function issueMove(state: ArmyState, unitId: string, destinationId: strin
 export function setUnitOrder(state: ArmyState, unitId: string, order: UnitOrder): ArmyState {
   return {
     ...state,
-    units: state.units.map((unit) => unit.id === unitId ? { ...unit, order, destinationId: order === 'move' ? unit.destinationId : undefined, movementProgress: order === 'move' ? unit.movementProgress : 0 } : unit),
+    units: state.units.map((unit) => unit.id === unitId ? {
+      ...unit,
+      order,
+      destinationId: order === 'move' || order === 'retreat' ? unit.destinationId : undefined,
+      movementProgress: order === 'move' || order === 'retreat' ? unit.movementProgress : 0,
+    } : unit),
   };
 }
 
-export function simulateArmyToElapsed(state: ArmyState, simulation: SimulationState, activeWarEntities: Set<string>): ArmyState {
+function effectiveController(location: ResolvedLocation, control?: TerritorialControlState) {
+  return control?.occupations[location.id]?.controllerId ?? location.controllerId ?? location.ownerId;
+}
+
+export function supplyLineForUnit(unit: ArmyUnit, year: number, control?: TerritorialControlState): SupplyLineStatus {
+  const all = locationsForYear(year);
+  const current = all.find((location) => location.id === unit.locationId);
+  const sources = all.filter((location) => location.ownerId === unit.entityId && effectiveController(location, control) === unit.entityId);
+  if (!current || !sources.length) return { distanceKm: 9999, efficiency: .2, state: 'broken' };
+  const ranked = sources
+    .map((source) => ({ source, distance: distanceKm(current, source) }))
+    .sort((a, b) => a.distance - b.distance);
+  const nearest = ranked[0];
+  const commandBonus = unit.commander.logistics / 100;
+  let efficiency = 1;
+  if (nearest.distance > 600) efficiency = .88;
+  if (nearest.distance > 1400) efficiency = .68;
+  if (nearest.distance > 2800) efficiency = .48;
+  if (nearest.distance > 5000) efficiency = .28;
+  efficiency = clamp((efficiency + commandBonus * .18) * 100) / 100;
+  return {
+    sourceLocationId: nearest.source.id,
+    distanceKm: nearest.distance,
+    efficiency,
+    state: efficiency < .4 ? 'broken' : efficiency < .7 ? 'strained' : 'connected',
+  };
+}
+
+export function simulateArmyToElapsed(
+  state: ArmyState,
+  simulation: SimulationState,
+  activeWarEntities: Set<string>,
+  control?: TerritorialControlState,
+): ArmyState {
   const days = Math.max(0, simulation.elapsedDays - state.lastElapsedDay);
   if (!days) return state;
   const units = state.units.map((unit) => {
@@ -115,40 +173,46 @@ export function simulateArmyToElapsed(state: ArmyState, simulation: SimulationSt
     const atWar = activeWarEntities.has(unit.entityId);
     const commandFactor = (unit.commander.logistics + unit.commander.skill) / 200;
     const fiscalFactor = runtime.treasuryIndex / 100;
+    const supplyLine = supplyLineForUnit(unit, simulation.date.year, control);
     let supply = unit.supply;
     let organization = unit.organization;
     let morale = unit.morale;
     let strength = unit.strength;
+    let equipment = unit.equipment;
     let movementProgress = unit.movementProgress;
     let locationId = unit.locationId;
     let destinationId = unit.destinationId;
     let order = unit.order;
 
-    if (order === 'move' && destinationId) {
-      movementProgress += days * (1.15 + unit.commander.initiative / 85) * Math.max(.45, supply / 100);
-      supply -= days * .085;
-      organization -= days * .035;
+    if ((order === 'move' || order === 'retreat') && destinationId) {
+      const retreatBoost = order === 'retreat' ? 1.35 : 1;
+      movementProgress += days * (1.15 + unit.commander.initiative / 85) * Math.max(.38, supply / 100) * retreatBoost;
+      supply -= days * (order === 'retreat' ? .12 : .085);
+      organization -= days * (order === 'retreat' ? .065 : .035);
+      morale -= days * (order === 'retreat' ? .055 : .008);
       if (movementProgress >= 100) {
         locationId = destinationId;
         destinationId = undefined;
         movementProgress = 0;
         order = 'hold';
-        organization += 5;
+        organization += 4;
       }
     } else if (order === 'prepare') {
       organization += days * .055 * commandFactor;
-      supply += days * .035 * fiscalFactor;
+      supply += days * .04 * fiscalFactor * supplyLine.efficiency;
       morale += days * .018;
     } else {
-      supply += days * .02 * fiscalFactor;
+      supply += days * .025 * fiscalFactor * supplyLine.efficiency;
       organization += days * .018 * commandFactor;
     }
 
     if (atWar) {
-      supply -= days * .055;
-      organization -= days * .028;
-      morale -= days * .012;
-      if (supply < 30) strength -= days * .018;
+      const linePenalty = 1 + (1 - supplyLine.efficiency) * 1.4;
+      supply -= days * .055 * linePenalty;
+      organization -= days * .028 * linePenalty;
+      morale -= days * .012 * linePenalty;
+      equipment -= days * .009 * linePenalty;
+      if (supply < 30) strength -= days * .018 * linePenalty;
     }
 
     return {
@@ -161,9 +225,100 @@ export function simulateArmyToElapsed(state: ArmyState, simulation: SimulationSt
       organization: clamp(organization),
       morale: clamp(morale),
       strength: clamp(strength),
+      equipment: clamp(equipment),
     };
   });
   return { units, lastElapsedDay: simulation.elapsedDays };
+}
+
+function nearestFriendlyRetreat(unit: ArmyUnit, year: number, control?: TerritorialControlState, avoidLocationId?: string) {
+  const locations = locationsForYear(year);
+  const current = locations.find((location) => location.id === unit.locationId);
+  const options = locations
+    .filter((location) => location.id !== avoidLocationId && location.ownerId === unit.entityId && effectiveController(location, control) === unit.entityId)
+    .map((location) => ({ location, distance: distanceKm(current, location) }))
+    .sort((a, b) => a.distance - b.distance);
+  return options[0]?.location;
+}
+
+export function applyBattleConsequences(
+  state: ArmyState,
+  warState: WarState,
+  simulation: SimulationState,
+  control: TerritorialControlState,
+  days: number,
+): ArmyState {
+  if (days <= 0) return state;
+  const locations = new Map(locationsForYear(simulation.date.year).map((location) => [location.id, location]));
+  let units = state.units.map((unit) => ({ ...unit }));
+
+  for (const war of warState.wars) {
+    if (war.status !== 'active') continue;
+    for (const front of war.fronts) {
+      if (!front.locationId || front.intensity < 18) continue;
+      const frontLocation = locations.get(front.locationId);
+      if (!frontLocation) continue;
+      const occupation = control.occupations[front.locationId];
+      const attackerIds = new Set(war.attackers);
+      const defenderIds = new Set(war.defenders);
+      const total = Math.max(1, front.attackerPower + front.defenderPower);
+      const attackerPressure = front.defenderPower / total;
+      const defenderPressure = front.attackerPower / total;
+
+      units = units.map((unit) => {
+        const isAttacker = attackerIds.has(unit.entityId);
+        const isDefender = defenderIds.has(unit.entityId);
+        if (!isAttacker && !isDefender) return unit;
+        const unitLocation = locations.get(unit.locationId);
+        const distance = distanceKm(unitLocation, frontLocation);
+        if (distance > 1800) return unit;
+        const participation = distance < 300 ? 1 : distance < 800 ? .72 : .42;
+        const pressure = isAttacker ? attackerPressure : defenderPressure;
+        const logistics = isAttacker ? front.attackerLogistics : front.defenderLogistics;
+        const exposure = participation * (front.intensity / 100) * (0.65 + pressure) * (1.2 - logistics / 250);
+        const casualtyRate = clamp(days * exposure * .00075, 0, .16);
+        const personnel = Math.max(0, Math.round(unit.personnel * (1 - casualtyRate)));
+        const strengthLoss = casualtyRate * 120;
+        const moraleLoss = casualtyRate * 95;
+        const organizationLoss = casualtyRate * 110;
+        const equipmentLoss = casualtyRate * 70;
+        return {
+          ...unit,
+          personnel,
+          strength: clamp(unit.strength - strengthLoss),
+          morale: clamp(unit.morale - moraleLoss),
+          organization: clamp(unit.organization - organizationLoss),
+          equipment: clamp(unit.equipment - equipmentLoss),
+        };
+      });
+
+      if (occupation?.progress >= 100) {
+        units = units.map((unit) => {
+          if (!defenderIds.has(unit.entityId) || unit.locationId !== front.locationId || unit.order === 'retreat') return unit;
+          const fallback = nearestFriendlyRetreat(unit, simulation.date.year, control, front.locationId);
+          if (!fallback) return { ...unit, morale: clamp(unit.morale - 18), organization: clamp(unit.organization - 22) };
+          return {
+            ...unit,
+            destinationId: fallback.id,
+            order: 'retreat',
+            movementProgress: 8,
+            morale: clamp(unit.morale - 12),
+            organization: clamp(unit.organization - 16),
+          };
+        });
+      } else if (occupation?.progress === 0 && occupation.lastOutcome === 'defender-hold') {
+        units = units.map((unit) => {
+          if (!attackerIds.has(unit.entityId) || unit.locationId !== front.locationId || unit.order === 'retreat') return unit;
+          const fallback = nearestFriendlyRetreat(unit, simulation.date.year, control, front.locationId);
+          if (!fallback) return unit;
+          return { ...unit, destinationId: fallback.id, order: 'retreat', movementProgress: 8, morale: clamp(unit.morale - 8), organization: clamp(unit.organization - 12) };
+        });
+      }
+    }
+  }
+
+  units = units.filter((unit) => unit.personnel > 200 && unit.strength > 3);
+  return { ...state, units };
 }
 
 export function forcesForEntity(state: ArmyState, entityId: string) {
