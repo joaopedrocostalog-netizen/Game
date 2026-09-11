@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { ScenarioEntity } from '../data/scenarios';
 import type { SimulationState } from '../engine/simulation';
 import {
+  applyCasusBelliCosts,
   casusBelliOptions,
   consumePreparation,
   preparationBetween,
   preparationReady,
   resetWarPreparations,
   startWarPreparation,
-  type CasusBelliOption,
   type CasusBelliType,
 } from '../engine/casusBelli';
 import { activeTruceBetween } from '../engine/peace';
@@ -26,7 +26,7 @@ type Props = {
   entity: ScenarioEntity;
   entities: ScenarioEntity[];
   simulation: SimulationState;
-  onDeclareWar: (targetId: string, goal: WarGoal, casusBelli: CasusBelliOption) => boolean;
+  onDeclareWar: (targetId: string, goal: WarGoal) => void;
 };
 
 export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }: Props) {
@@ -84,11 +84,14 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
 
   function declare() {
     if (!target || !selected || !ready || truce) return;
-    const success = onDeclareWar(target.id, goal, selected);
-    if (success) {
-      consumePreparation(entity.id, target.id);
-      setRevision((value) => value + 1);
-    }
+    const nextSimulation = applyCasusBelliCosts(simulation, entity.id, target.id, selected);
+    Object.assign(simulation.entities, nextSimulation.entities);
+    Object.keys(simulation.diplomacy).forEach((key) => delete simulation.diplomacy[key]);
+    Object.assign(simulation.diplomacy, nextSimulation.diplomacy);
+    simulation.events.splice(0, simulation.events.length, ...nextSimulation.events);
+    onDeclareWar(target.id, goal);
+    consumePreparation(entity.id, target.id);
+    setRevision((value) => value + 1);
   }
 
   return <div className="war-planner casus-planner">
