@@ -13,6 +13,43 @@ export type PeaceEvaluation = {
   reason: string;
 };
 
+export type TruceRecord = {
+  id: string;
+  parties: [string, string];
+  sourceWarId: string;
+  signedAtElapsedDay: number;
+  expiresAtElapsedDay: number;
+  term: PeaceTerm;
+};
+
+export type TerritorialClaim = {
+  id: string;
+  claimantId: string;
+  holderId: string;
+  locationId: string;
+  sourceWarId: string;
+  createdAtElapsedDay: number;
+  strength: number;
+  active: boolean;
+};
+
+export type PeaceMemory = {
+  id: string;
+  warId: string;
+  parties: [string, string];
+  winnerId: string;
+  loserId: string;
+  term: PeaceTerm;
+  signedAtElapsedDay: number;
+  transferredLocationIds: string[];
+};
+
+export type PostWarState = {
+  truces: TruceRecord[];
+  claims: TerritorialClaim[];
+  peaceHistory: PeaceMemory[];
+};
+
 export type PeaceResolution = {
   accepted: boolean;
   message: string;
@@ -22,8 +59,49 @@ export type PeaceResolution = {
   transferredLocationIds: string[];
 };
 
+type PostWarGlobal = typeof globalThis & { __WORLD_STATE_POSTWAR__?: PostWarState };
+
 function clamp(value: number, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
+}
+
+function currentPostWarState(): PostWarState {
+  const root = globalThis as PostWarGlobal;
+  if (!root.__WORLD_STATE_POSTWAR__) root.__WORLD_STATE_POSTWAR__ = { truces: [], claims: [], peaceHistory: [] };
+  return root.__WORLD_STATE_POSTWAR__;
+}
+
+function publishPostWarState(state: PostWarState) {
+  const root = globalThis as PostWarGlobal;
+  root.__WORLD_STATE_POSTWAR__ = state;
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('world-state-postwar', { detail: state }));
+}
+
+export function postWarState(): PostWarState {
+  const state = currentPostWarState();
+  return { truces: [...state.truces], claims: [...state.claims], peaceHistory: [...state.peaceHistory] };
+}
+
+export function resetPostWarState() {
+  publishPostWarState({ truces: [], claims: [], peaceHistory: [] });
+}
+
+export function activeTruceBetween(a: string, b: string, elapsedDay: number) {
+  return currentPostWarState().truces.find((truce) =>
+    truce.expiresAtElapsedDay > elapsedDay && truce.parties.includes(a) && truce.parties.includes(b),
+  );
+}
+
+export function claimsForEntity(entityId: string) {
+  return currentPostWarState().claims.filter((claim) => claim.active && claim.claimantId === entityId);
+}
+
+export function revanchismForEntity(entityId: string, elapsedDay: number) {
+  const state = currentPostWarState();
+  const claims = state.claims.filter((claim) => claim.active && claim.claimantId === entityId);
+  if (!claims.length) return 0;
+  const activeTruces = state.truces.filter((truce) => truce.expiresAtElapsedDay > elapsedDay && truce.parties.includes(entityId)).length;
+  return clamp(claims.reduce((sum, claim) => sum + claim.strength, 0) / claims.length + claims.length * 6 - activeTruces * 5, 0, 100);
 }
 
 function warById(state: WarState, warId: string) {
@@ -152,6 +230,53 @@ function applyReparations(simulation: SimulationState, war: War, side: PeaceSide
   };
 }
 
+function registerPostWarConsequences(
+  simulation: SimulationState,
+  war: War,
+  side: PeaceSide,
+  term: PeaceTerm,
+  transferredLocationIds: string[],
+) {
+  const current = currentPostWarState();
+  const winnerId = leaderForSide(war, side);
+  const loserId = enemyLeader(war, side);
+  const truceDays = simulation.date.year < 1800 ? 1460 : 1825;
+  const parties: [string, string] = [war.attackerId, war.defenderId];
+  const truce: TruceRecord = {
+    id: `truce-${war.id}`,
+    parties,
+    sourceWarId: war.id,
+    signedAtElapsedDay: simulation.elapsedDays,
+    expiresAtElapsedDay: simulation.elapsedDays + truceDays,
+    term,
+  };
+  const memory: PeaceMemory = {
+    id: `peace-memory-${war.id}`,
+    warId: war.id,
+    parties,
+    winnerId,
+    loserId,
+    term,
+    signedAtElapsedDay: simulation.elapsedDays,
+    transferredLocationIds,
+  };
+  const newClaims: TerritorialClaim[] = transferredLocationIds.map((locationId, index) => ({
+    id: `claim-${loserId}-${locationId}-${war.id}`,
+    claimantId: loserId,
+    holderId: winnerId,
+    locationId,
+    sourceWarId: war.id,
+    createdAtElapsedDay: simulation.elapsedDays,
+    strength: clamp(62 + Math.abs(war.score) * 0.18 - index * 4, 45, 92),
+    active: true,
+  }));
+  publishPostWarState({
+    truces: [truce, ...current.truces.filter((item) => !(item.parties.includes(war.attackerId) && item.parties.includes(war.defenderId)))].slice(0, 40),
+    claims: [...newClaims, ...current.claims].slice(0, 80),
+    peaceHistory: [memory, ...current.peaceHistory].slice(0, 40),
+  });
+}
+
 export function resolvePeaceOffer(
   warState: WarState,
   control: TerritorialControlState,
@@ -194,6 +319,7 @@ export function resolvePeaceOffer(
 
   const victor: War['victor'] = side === 'attacker' ? 'attackers' : 'defenders';
   const wars: War[] = warState.wars.map((item) => item.id === war.id ? { ...item, status: 'ended' as const, victor } : item);
+  registerPostWarConsequences(simulation, war, side, term, transferredLocationIds);
   const termLabel: Record<PeaceTerm, string> = {
     status_quo: 'cessar-fogo com restauração do status territorial',
     reparations: 'paz com reparações financeiras',
@@ -203,7 +329,7 @@ export function resolvePeaceOffer(
 
   return {
     accepted: true,
-    message: `A outra parte aceitou: ${termLabel[term]}. A ocupação restante foi encerrada e a guerra terminou por acordo negociado.`,
+    message: `A outra parte aceitou: ${termLabel[term]}. Uma trégua temporária entrou em vigor; violações futuras terão custo político.`,
     warState: { ...warState, wars },
     territorialControl: nextControl,
     simulation: nextSimulation,
