@@ -1,5 +1,6 @@
 import type { ArmyState } from './army';
 import { militaryInstitutionalModifiers } from './militaryLegacy';
+import { militaryReformModifiers } from './peacetimeMilitaryReforms';
 import type { WarState } from './war';
 
 export type MilitaryLegacyApplicationState = { appliedKeys: string[] };
@@ -34,19 +35,21 @@ export function applyMilitaryLegacyToActiveCampaigns(armyState: ArmyState, warSt
     const key = `${war.id}::${unit.id}`;
     if (applied.has(key)) return unit;
     applied.add(key);
-    const modifier = militaryInstitutionalModifiers(unit.entityId);
-    if (modifier.experience <= 0 && modifier.trauma <= 0) return unit;
+    const legacy = militaryInstitutionalModifiers(unit.entityId);
+    const reform = militaryReformModifiers(unit.entityId);
+    const hasInstitutionalEffects = legacy.experience > 0 || legacy.trauma > 0 || reform.reformCapacity > 0;
+    if (!hasInstitutionalEffects) return unit;
     changed = true;
     return {
       ...unit,
-      organization: clamp(unit.organization + modifier.organization),
-      morale: clamp(unit.morale + modifier.morale),
-      supply: clamp(unit.supply + modifier.supply),
+      organization: clamp(unit.organization + legacy.organization + reform.organization),
+      morale: clamp(unit.morale + legacy.morale + reform.morale),
+      supply: clamp(unit.supply + legacy.supply + reform.supply),
       commander: {
         ...unit.commander,
-        skill: clamp(unit.commander.skill + modifier.commanderSkill),
-        logistics: clamp(unit.commander.logistics + modifier.commanderLogistics),
-        initiative: clamp(unit.commander.initiative + modifier.commanderInitiative),
+        skill: clamp(unit.commander.skill + legacy.commanderSkill + reform.commanderSkill),
+        logistics: clamp(unit.commander.logistics + legacy.commanderLogistics + reform.commanderLogistics),
+        initiative: clamp(unit.commander.initiative + legacy.commanderInitiative + reform.commanderInitiative),
       },
     };
   });
