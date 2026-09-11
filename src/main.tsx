@@ -3,8 +3,19 @@ import { createRoot } from 'react-dom/client';
 import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, Settings2, Shield, Sparkles, Swords, TrendingUp, Users, BarChart3, Eye, ScrollText } from 'lucide-react';
 import { WorldMap } from './components/WorldMap';
 import { SystemDetailPanel } from './components/SystemDetailPanel';
+import { DiplomaticInbox } from './components/DiplomaticInbox';
 import { scenarios, type ScenarioEntity } from './data/scenarios';
-import { applyDiplomaticAction, applyPlayerDirective, createInitialRuntime, simulateDays, type GameDate, type SimulationState } from './engine/simulation';
+import {
+  applyDiplomaticAction,
+  applyPlayerDirective,
+  createInitialRuntime,
+  resolveDiplomaticProposal,
+  setPlayerEntity,
+  simulateDays,
+  type GameDate,
+  type ProposalDecision,
+  type SimulationState,
+} from './engine/simulation';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
@@ -65,6 +76,7 @@ function App() {
   const runtime = simulation.entities[entity.id];
   const shownDate = formatDate(simulation.date);
   const entityNames = useMemo(() => Object.fromEntries(scenario.entities.map((item) => [item.id, item.name])), [scenario]);
+  const pendingProposals = simulation.proposals.filter((item) => item.toId === entity.id && item.status === 'pending').length;
 
   useEffect(() => {
     if (speed === 0) return;
@@ -84,7 +96,7 @@ function App() {
 
   function advanceDays(days: number, label: string) {
     setSimulation((state) => simulateDays(state, days));
-    setAdvisorText(`Tempo avançado em ${label}. O motor executou os ticks correspondentes sem depender da animação da interface.`);
+    setAdvisorText(`Tempo avançado em ${label}. O motor executou os ticks correspondentes, inclusive decisões trimestrais da IA estratégica.`);
   }
 
   function handleMapCountry(name: string) {
@@ -94,7 +106,10 @@ function App() {
     }
     const known = scenario.entities.find((item) => item.name.toLowerCase() === name.toLowerCase());
     setMapSelection(known ?? genericEntity(name));
-    if (known) setSelectedId(known.id);
+    if (known) {
+      setSelectedId(known.id);
+      setSimulation((state) => setPlayerEntity(state, known.id));
+    }
   }
 
   function handleTerritory(entityId: string, locationName: string) {
@@ -105,13 +120,15 @@ function App() {
     }
     setSelectedId(known.id);
     setMapSelection(null);
-    setAdvisorText(`${locationName} selecionada. O registro temporal associa esta location a ${known.name} em ${simulation.date.year}.`);
+    setSimulation((state) => setPlayerEntity(state, known.id));
+    setAdvisorText(`${locationName} selecionada. ${known.name} agora é a entidade controlada pelo jogador; sua IA autônoma foi suspensa.`);
   }
 
   function selectEntity(item: ScenarioEntity) {
     setSelectedId(item.id);
     setMapSelection(null);
-    setAdvisorText(`${item.name} selecionado. Diferencial inicial: ${item.specialty}.`);
+    setSimulation((state) => setPlayerEntity(state, item.id));
+    setAdvisorText(`${item.name} selecionado como entidade controlada. Diferencial inicial: ${item.specialty}.`);
   }
 
   function selectSystem(name: SystemName) {
@@ -122,7 +139,16 @@ function App() {
   function handleDiplomaticAction(targetId: string, message: string) {
     const target = scenario.entities.find((item) => item.id === targetId);
     setSimulation((state) => applyDiplomaticAction(state, entity.id, targetId, message));
-    setAdvisorText(`Mensagem diplomática enviada de ${entity.name} para ${target?.name ?? targetId}. A negociação agora altera relação, confiança, memória e tratados da campanha.`);
+    setAdvisorText(`Mensagem diplomática enviada de ${entity.name} para ${target?.name ?? targetId}. A negociação altera relação, confiança, memória e tratados da campanha.`);
+  }
+
+  function handleProposalDecision(proposalId: string, decision: ProposalDecision, counterText?: string) {
+    const proposal = simulation.proposals.find((item) => item.id === proposalId);
+    const fromName = proposal ? (entityNames[proposal.fromId] ?? proposal.fromId) : 'a outra parte';
+    setSimulation((state) => resolveDiplomaticProposal(state, proposalId, decision, counterText));
+    if (decision === 'accept') setAdvisorText(`A proposta de ${fromName} foi aceita. O motor aplicou as consequências diplomáticas e quaisquer tratados correspondentes.`);
+    else if (decision === 'reject') setAdvisorText(`A proposta de ${fromName} foi recusada. Relação, confiança e ameaça percebida podem reagir à decisão.`);
+    else setAdvisorText(`Uma contraproposta foi enviada a ${fromName}. A IA avaliou os novos termos com base em seus interesses, confiança, abertura e tolerância a risco.`);
   }
 
   function submitCommand(event: React.FormEvent) {
@@ -152,7 +178,7 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.5</span></div></div>
+        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.7</span></div></div>
         <div className="time-center">
           <button className={speed === 0 ? 'icon-button active' : 'icon-button'} onClick={() => setSpeed(0)} aria-label="Pausar"><Pause size={16} /></button>
           {[1, 2, 4, 8].map((value) => <button key={value} className={speed === value ? 'speed active' : 'speed'} onClick={() => setSpeed(value)}>{value}×</button>)}
@@ -167,7 +193,7 @@ function App() {
 
       <main className="workspace">
         <aside className="left-panel panel">
-          <div className="eyebrow">ENTIDADE ATIVA</div>
+          <div className="eyebrow">ENTIDADE CONTROLADA</div>
           <h1>{entity.name}</h1>
           <div className="entity-meta">{entity.type} • {entity.government}</div>
           <div className="specialty">{entity.specialty}</div>
@@ -206,13 +232,16 @@ function App() {
         <aside className="right-panel panel">
           <div className="advisor-heading"><Brain size={17}/><div><span>CONSELHEIRO IA</span><strong>Conselho de Estado</strong></div></div>
           <div className="advisor-card"><p>{advisorText}</p><span className="confidence">Conhecimento limitado ao que o Estado poderia razoavelmente saber.</span></div>
+
+          {(pendingProposals > 0 || activeSystem === 'Diplomacia') && <DiplomaticInbox proposals={simulation.proposals} entityId={entity.id} entityNames={entityNames} onResolve={handleProposalDecision} />}
+
           <div className="section-title">{activeSystem}</div>
           <div className="system-focus">
             <strong>{activeSystem} de {entity.name}</strong>
             <p>{systemInfo[activeSystem]}</p>
             {runtime && <SystemSnapshot activeSystem={activeSystem} runtime={runtime} />}
             {uiMode === 'Avançada' && <SystemDetailPanel system={activeSystem} entityId={entity.id} entityName={entity.name} year={simulation.date.year} runtime={runtime} allRuntimes={simulation.entities} diplomacy={simulation.diplomacy} treaties={simulation.treaties} onDiplomaticAction={handleDiplomaticAction} />}
-            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Tratados</b>{simulation.treaties.filter((item) => item.active).length}</span><span><b>Tick</b>{simulation.elapsedDays}</span></div>}
+            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Tratados</b>{simulation.treaties.filter((item) => item.active).length}</span><span><b>Propostas</b>{pendingProposals}</span></div>}
           </div>
           <div className="section-title history-title"><ScrollText size={12}/> História recente</div>
           <div className="history-feed">{simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 6).map((item) => <div className="history-item" key={item.id}><span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span><strong>{item.title}</strong><p>{item.text}</p></div>)}</div>
