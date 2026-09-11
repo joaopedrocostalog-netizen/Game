@@ -159,10 +159,18 @@ export function contributeFormation(forceId: string, memberId: string, simulatio
   updated = recompute(updated, simulation, nextArmyState);
   publish({ forces: state.forces.map((item) => item.id === force.id ? updated : item) });
   const member = simulation.entities[memberId];
+  const contributionEvent: WorldEvent = {
+    id: `joint-contribution-${force.id}-${memberId}-${simulation.elapsedDays}`,
+    date: simulation.date,
+    entityId: memberId,
+    category: 'military',
+    title: 'Contingente destacado para comando multinacional',
+    text: `${memberId} destacou ${personnel.toLocaleString('pt-BR')} militares e recursos para ${force.name}.`,
+  };
   const nextSimulation: SimulationState = {
     ...simulation,
     entities: { ...simulation.entities, [memberId]: { ...member, treasuryIndex: clamp(member.treasuryIndex - budgetShare * .12), militaryReadiness: clamp(member.militaryReadiness - 1.2) } },
-    events: [{ id: `joint-contribution-${force.id}-${memberId}-${simulation.elapsedDays}`, date: simulation.date, entityId: memberId, category: 'military', title: 'Contingente destacado para comando multinacional', text: `${memberId} destacou ${personnel.toLocaleString('pt-BR')} militares e recursos para ${force.name}.` }, ...simulation.events].slice(0, 50),
+    events: [contributionEvent, ...simulation.events].slice(0, 50),
   };
   return { accepted: true, armyState: nextArmyState, simulation: nextSimulation, force: updated, message: 'Contingente transferido para o comando multinacional.' };
 }
@@ -217,7 +225,14 @@ export function dissolveJointForce(forceId: string, simulation: SimulationState,
     if (national && personnel > 0) units = units.map((unit) => unit.id === national.id ? { ...unit, personnel: unit.personnel + personnel, morale: clamp(unit.morale + 2) } : unit);
   }
   publish({ forces: state.forces.map((item) => item.id === force.id ? { ...item, status: 'dissolved' } : item) });
-  return { accepted: true, simulation: { ...simulation, events: [{ id: `joint-dissolve-${force.id}-${simulation.elapsedDays}`, date: simulation.date, category: 'military', title: 'Comando multinacional dissolvido', text: `${force.name} foi dissolvido e seus contingentes sobreviventes retornaram às estruturas nacionais.` }, ...simulation.events].slice(0, 50) }, armyState: { ...armyState, units }, message: 'Força conjunta dissolvida.' };
+  const dissolveEvent: WorldEvent = {
+    id: `joint-dissolve-${force.id}-${simulation.elapsedDays}`,
+    date: simulation.date,
+    category: 'military',
+    title: 'Comando multinacional dissolvido',
+    text: `${force.name} foi dissolvido e seus contingentes sobreviventes retornaram às estruturas nacionais.`,
+  };
+  return { accepted: true, simulation: { ...simulation, events: [dissolveEvent, ...simulation.events].slice(0, 50) }, armyState: { ...armyState, units }, message: 'Força conjunta dissolvida.' };
 }
 
 export function forcesForOrganization(organizationId: string) {
