@@ -81,17 +81,18 @@ export function pairKey(a: string, b: string) {
 
 export function setPlayerEntity(state: SimulationState, entityId: string): SimulationState {
   if (!state.entities[entityId] || state.playerEntityId === entityId) return state;
+  const event: WorldEvent = {
+    id: `player-control-${entityId}-${state.elapsedDays}`,
+    date: state.date,
+    entityId,
+    category: 'world',
+    title: 'Entidade controlada alterada',
+    text: `${entityId} passou a ser a entidade diretamente controlada pelo jogador. A IA estratégica autônoma ficará suspensa para ela enquanto permanecer sob controle.`,
+  };
   return {
     ...state,
     playerEntityId: entityId,
-    events: [{
-      id: `player-control-${entityId}-${state.elapsedDays}`,
-      date: state.date,
-      entityId,
-      category: 'world',
-      title: 'Entidade controlada alterada',
-      text: `${entityId} passou a ser a entidade diretamente controlada pelo jogador. A IA estratégica autônoma ficará suspensa para ela enquanto permanecer sob controle.`,
-    }, ...state.events].slice(0, 50),
+    events: [event, ...state.events].slice(0, 50),
   };
 }
 
@@ -274,7 +275,7 @@ function proposalRationale(type: ProposalType, ai: StrategicAIState) {
   if (type === 'trade') return `A prioridade estratégica atual é econômica. ${ai.objective}.`;
   if (type === 'alliance') return `A política externa busca parceiros confiáveis. ${ai.objective}.`;
   if (type === 'technology') return `A liderança considera a capacidade tecnológica uma prioridade. ${ai.objective}.`;
-  return `A liderança considera a situação de segurança suficientemente séria para aumentar a pressão diplomática.`;
+  return 'A liderança considera a situação de segurança suficientemente séria para aumentar a pressão diplomática.';
 }
 
 function createProposal(
@@ -368,27 +369,13 @@ function runStrategicAI(state: SimulationState, date: GameDate): SimulationState
         if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'trade', date, ai);
         else {
           next = signAITreaty(next, best, 'trade', date);
-          generatedEvents.push({
-            id: `ai-trade-${ai.entityId}-${other}-${date.year}-${date.month}`,
-            date,
-            entityId: ai.entityId,
-            category: 'diplomacy',
-            title: 'IA estratégica: acordo comercial',
-            text: `${ai.entityId} identificou ${other} como parceiro economicamente útil e concluiu um acordo comercial.`,
-          });
+          generatedEvents.push({ id: `ai-trade-${ai.entityId}-${other}-${date.year}-${date.month}`, date, entityId: ai.entityId, category: 'diplomacy', title: 'IA estratégica: acordo comercial', text: `${ai.entityId} identificou ${other} como parceiro economicamente útil e concluiu um acordo comercial.` });
         }
       } else if (focus === 'diplomacy' && best.score >= 64 && best.trust >= 58 && ai.riskTolerance >= 38 && !hasTreaty(next, ai.entityId, other, 'alliance')) {
         if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'alliance', date, ai);
         else {
           next = signAITreaty(next, best, 'alliance', date);
-          generatedEvents.push({
-            id: `ai-alliance-${ai.entityId}-${other}-${date.year}-${date.month}`,
-            date,
-            entityId: ai.entityId,
-            category: 'diplomacy',
-            title: 'IA estratégica: alinhamento',
-            text: `${ai.entityId} decidiu aprofundar sua segurança externa e formalizou uma aliança com ${other}.`,
-          });
+          generatedEvents.push({ id: `ai-alliance-${ai.entityId}-${other}-${date.year}-${date.month}`, date, entityId: ai.entityId, category: 'diplomacy', title: 'IA estratégica: alinhamento', text: `${ai.entityId} decidiu aprofundar sua segurança externa e formalizou uma aliança com ${other}.` });
         }
       }
     }
@@ -400,14 +387,7 @@ function runStrategicAI(state: SimulationState, date: GameDate): SimulationState
         if (other === next.playerEntityId) next = createProposal(next, ai.entityId, other, 'technology', date, ai);
         else {
           next = signAITreaty(next, best, 'technology', date);
-          generatedEvents.push({
-            id: `ai-tech-${ai.entityId}-${other}-${date.year}-${date.month}`,
-            date,
-            entityId: ai.entityId,
-            category: 'technology',
-            title: 'IA estratégica: cooperação tecnológica',
-            text: `${ai.entityId} buscou reduzir sua defasagem por meio de cooperação tecnológica com ${other}.`,
-          });
+          generatedEvents.push({ id: `ai-tech-${ai.entityId}-${other}-${date.year}-${date.month}`, date, entityId: ai.entityId, category: 'technology', title: 'IA estratégica: cooperação tecnológica', text: `${ai.entityId} buscou reduzir sua defasagem por meio de cooperação tecnológica com ${other}.` });
         }
       }
     }
@@ -427,23 +407,14 @@ function runStrategicAI(state: SimulationState, date: GameDate): SimulationState
           memory: [`Pressão estratégica de ${ai.entityId} durante a campanha`, ...tense.memory].slice(0, 8),
         };
         next = { ...next, diplomacy: { ...next.diplomacy, [key]: updated } };
-        generatedEvents.push({
-          id: `ai-pressure-${ai.entityId}-${other}-${date.year}-${date.month}`,
-          date,
-          entityId: ai.entityId,
-          category: 'military',
-          title: 'IA estratégica: pressão sobre rival',
-          text: `${ai.entityId} passou a tratar ${other} como preocupação estratégica e elevou sua pressão diplomático-militar.`,
-        });
+        generatedEvents.push({ id: `ai-pressure-${ai.entityId}-${other}-${date.year}-${date.month}`, date, entityId: ai.entityId, category: 'military', title: 'IA estratégica: pressão sobre rival', text: `${ai.entityId} passou a tratar ${other} como preocupação estratégica e elevou sua pressão diplomático-militar.` });
       }
     }
 
     next = maybeProposeToPlayer(next, ai, date);
   }
 
-  if (generatedEvents.length) {
-    next = { ...next, events: [...generatedEvents.slice(0, 6), ...next.events].slice(0, 50) };
-  }
+  if (generatedEvents.length) next = { ...next, events: [...generatedEvents.slice(0, 6), ...next.events].slice(0, 50) };
   return next;
 }
 
@@ -495,11 +466,7 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
     }
 
     next = { ...next, date, entities, elapsedDays: next.elapsedDays + 1 };
-
-    if (date.day === 1 && [1, 4, 7, 10].includes(date.month)) {
-      next = runStrategicAI(next, date);
-    }
-
+    if (date.day === 1 && [1, 4, 7, 10].includes(date.month)) next = runStrategicAI(next, date);
     if (date.day === 1 && date.month === 1) {
       const annualEvent: WorldEvent = {
         id: `year-${date.year}`,
@@ -515,12 +482,7 @@ export function simulateDays(state: SimulationState, days: number): SimulationSt
   return next;
 }
 
-export function resolveDiplomaticProposal(
-  state: SimulationState,
-  proposalId: string,
-  decision: ProposalDecision,
-  counterText = '',
-): SimulationState {
+export function resolveDiplomaticProposal(state: SimulationState, proposalId: string, decision: ProposalDecision, counterText = ''): SimulationState {
   const proposal = state.proposals.find((item) => item.id === proposalId);
   if (!proposal || proposal.status !== 'pending') return state;
   const key = pairKey(proposal.fromId, proposal.toId);
@@ -552,9 +514,7 @@ export function resolveDiplomaticProposal(
     relation.trust = clamp(relation.trust - (proposal.type === 'ultimatum' ? 3 : 2));
     relation.threat = clamp(relation.threat + (proposal.type === 'ultimatum' ? 6 : 1));
     relation.memory.unshift(proposal.type === 'ultimatum' ? 'Exigência diplomática rejeitada' : `Proposta de ${proposal.type} rejeitada`);
-    resolution = proposal.type === 'ultimatum'
-      ? 'A exigência foi rejeitada. A ameaça percebida e a tensão bilateral aumentaram.'
-      : 'A proposta foi recusada. A relação sofreu um pequeno desgaste.';
+    resolution = proposal.type === 'ultimatum' ? 'A exigência foi rejeitada. A ameaça percebida e a tensão bilateral aumentaram.' : 'A proposta foi recusada. A relação sofreu um pequeno desgaste.';
     next = { ...next, diplomacy: { ...next.diplomacy, [key]: relation } };
   } else {
     status = 'countered';
@@ -583,12 +543,7 @@ export function resolveDiplomaticProposal(
     }
   }
 
-  const updatedProposals = next.proposals.map((item) => item.id === proposalId ? {
-    ...item,
-    status,
-    counterText: decision === 'counter' ? counterText.trim() : item.counterText,
-    resolution,
-  } : item);
+  const updatedProposals = next.proposals.map((item) => item.id === proposalId ? { ...item, status, counterText: decision === 'counter' ? counterText.trim() : item.counterText, resolution } : item);
   const event: WorldEvent = {
     id: `proposal-resolution-${proposalId}-${state.elapsedDays}`,
     date: state.date,
@@ -598,11 +553,7 @@ export function resolveDiplomaticProposal(
     text: `${proposal.toId} respondeu a ${proposal.fromId}. ${resolution}`,
   };
 
-  return {
-    ...next,
-    proposals: updatedProposals,
-    events: [event, ...next.events].slice(0, 50),
-  };
+  return { ...next, proposals: updatedProposals, events: [event, ...next.events].slice(0, 50) };
 }
 
 export function applyDiplomaticAction(state: SimulationState, fromId: string, toId: string, message: string): SimulationState {
@@ -658,10 +609,7 @@ export function applyDiplomaticAction(state: SimulationState, fromId: string, to
     text: `${fromId} → ${toId}: ${message} — ${outcome}`,
   };
 
-  return {
-    ...next,
-    events: [event, ...next.events].slice(0, 50),
-  };
+  return { ...next, events: [event, ...next.events].slice(0, 50) };
 }
 
 export function applyPlayerDirective(state: SimulationState, entityId: string, directive: string): SimulationState {
@@ -705,9 +653,5 @@ export function applyPlayerDirective(state: SimulationState, entityId: string, d
     text: `${directive} — ${consequence}`,
   };
 
-  return {
-    ...state,
-    entities: { ...state.entities, [entityId]: updated },
-    events: [directiveEvent, ...state.events].slice(0, 50),
-  };
+  return { ...state, entities: { ...state.entities, [entityId]: updated }, events: [directiveEvent, ...state.events].slice(0, 50) };
 }
