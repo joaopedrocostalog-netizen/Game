@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { locationsForYear } from '../data/territories';
 import { areasForYear } from '../data/historicalAreas';
+import type { TerritorialControlState } from '../engine/territorialControl';
 import './world-map.css';
 
 type Geometry = {
@@ -37,6 +38,8 @@ type Props = {
   historicalLayerReady?: boolean;
 };
 
+type ControlGlobal = typeof globalThis & { __WORLD_STATE_TERRITORIAL_CONTROL__?: TerritorialControlState };
+
 const GEOJSON_URL = 'https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson';
 
 function project([lon, lat]: number[]) {
@@ -57,32 +60,21 @@ function areaPath(polygon: Array<[number, number]>) {
 }
 
 function geometryToPath(geometry: Geometry) {
-  if (geometry.type === 'Polygon') {
-    return (geometry.coordinates as number[][][]).map(ringToPath).join(' ');
-  }
-  return (geometry.coordinates as number[][][][])
-    .flatMap((polygon) => polygon.map(ringToPath))
-    .join(' ');
+  if (geometry.type === 'Polygon') return (geometry.coordinates as number[][][]).map(ringToPath).join(' ');
+  return (geometry.coordinates as number[][][][]).flatMap((polygon) => polygon.map(ringToPath)).join(' ');
 }
 
 function colorIndex(id: string) {
   return [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 8;
 }
 
-export function WorldMap({
-  selectedName,
-  selectedEntityId,
-  year,
-  entityNames = {},
-  onSelectCountry,
-  onSelectTerritory,
-  historicalLayerReady = false,
-}: Props) {
+export function WorldMap({ selectedName, selectedEntityId, year, entityNames = {}, onSelectCountry, onSelectTerritory, historicalLayerReady = false }: Props) {
   const [data, setData] = useState<FeatureCollection | null>(null);
   const [error, setError] = useState('');
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [armyMarkers, setArmyMarkers] = useState<ArmyMarker[]>([]);
+  const [territorialControl, setTerritorialControl] = useState<TerritorialControlState>(() => (globalThis as ControlGlobal).__WORLD_STATE_TERRITORIAL_CONTROL__ ?? { occupations: {}, battles: [] });
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const effectiveYear = year ?? (historicalLayerReady ? 2026 : 1500);
 
@@ -107,6 +99,15 @@ export function WorldMap({
     return () => window.removeEventListener('world-state-armies', listener);
   }, [selectedEntityId]);
 
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const custom = event as CustomEvent<TerritorialControlState>;
+      if (custom.detail) setTerritorialControl(custom.detail);
+    };
+    window.addEventListener('world-state-territorial-control', listener);
+    return () => window.removeEventListener('world-state-territorial-control', listener);
+  }, []);
+
   useEffect(() => { setArmyMarkers([]); }, [selectedEntityId, effectiveYear]);
 
   const features = useMemo(() => data?.features ?? [], [data]);
@@ -130,9 +131,7 @@ export function WorldMap({
         <button type="button" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>⟳</button>
       </div>
 
-      {!historicalLayerReady && (
-        <div className="historical-status">Camada política histórica experimental • áreas esquemáticas + locations temporais • limites finais ainda serão pesquisados e vetorizados</div>
-      )}
+      {!historicalLayerReady && <div className="historical-status">Camada política histórica experimental • áreas esquemáticas + locations temporais • controle militar dinâmico separado da soberania</div>}
 
       {error ? <div className="map-loading error">{error}</div> : !data ? <div className="map-loading">Carregando geografia mundial…</div> : (
         <svg
@@ -160,19 +159,15 @@ export function WorldMap({
             {features.map((feature, index) => {
               const name = countryName(feature);
               const selected = selectedName?.toLowerCase() === name.toLowerCase();
-              return (
-                <path
-                  key={`${name}-${index}`}
-                  d={geometryToPath(feature.geometry)}
-                  className={`${selected ? 'country-shape selected' : 'country-shape'} ${historicalLayerReady ? '' : 'geography-only'}`}
-                  tabIndex={historicalLayerReady ? 0 : -1}
-                  aria-label={name}
-                  onClick={() => { if (historicalLayerReady) onSelectCountry(name); }}
-                  onKeyDown={(event) => { if (historicalLayerReady && (event.key === 'Enter' || event.key === ' ')) onSelectCountry(name); }}
-                >
-                  <title>{historicalLayerReady ? name : `${name} • geografia-base contemporânea, não fronteira histórica`}</title>
-                </path>
-              );
+              return <path
+                key={`${name}-${index}`}
+                d={geometryToPath(feature.geometry)}
+                className={`${selected ? 'country-shape selected' : 'country-shape'} ${historicalLayerReady ? '' : 'geography-only'}`}
+                tabIndex={historicalLayerReady ? 0 : -1}
+                aria-label={name}
+                onClick={() => { if (historicalLayerReady) onSelectCountry(name); }}
+                onKeyDown={(event) => { if (historicalLayerReady && (event.key === 'Enter' || event.key === ' ')) onSelectCountry(name); }}
+              ><title>{historicalLayerReady ? name : `${name} • geografia-base contemporânea, não fronteira histórica`}</title></path>;
             })}
 
             {!historicalLayerReady && <g className="historical-area-layer" aria-label={`Áreas políticas esquemáticas de ${effectiveYear}`}>
@@ -186,44 +181,37 @@ export function WorldMap({
                   tabIndex={0}
                   role="button"
                   aria-label={`${ownerName}, ${area.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSelectTerritory?.(area.entityId, area.name);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') onSelectTerritory?.(area.entityId, area.name);
-                  }}
-                >
-                  <title>{ownerName} • {area.name} • confiança {area.confidence} • {area.note}</title>
-                </path>;
+                  onClick={(event) => { event.stopPropagation(); onSelectTerritory?.(area.entityId, area.name); }}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSelectTerritory?.(area.entityId, area.name); }}
+                ><title>{ownerName} • {area.name} • confiança {area.confidence} • {area.note}</title></path>;
               })}
             </g>}
 
             <g className="temporal-layer" aria-label={`Locations temporais de ${effectiveYear}`}>
               {temporalLocations.map((location) => {
                 const [x, y] = project([location.lon, location.lat]);
-                const active = location.ownerId === selectedEntityId;
+                const occupation = territorialControl.occupations[location.id];
+                const effectiveController = occupation?.controllerId ?? location.controllerId ?? location.ownerId;
+                const active = effectiveController === selectedEntityId || location.ownerId === selectedEntityId;
                 const ownerName = location.ownerId ? (entityNames[location.ownerId] ?? location.ownerId) : 'Desconhecido';
-                return (
-                  <g
-                    key={location.id}
-                    className={active ? 'territory-marker active' : 'territory-marker'}
-                    transform={`translate(${x} ${y})`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name);
-                    }}
-                    onKeyDown={(event) => {
-                      if ((event.key === 'Enter' || event.key === ' ') && location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name);
-                    }}
-                  >
-                    <circle r={active ? 5.5 : 4} />
-                    <circle className="marker-ring" r={active ? 9 : 7} />
-                    <title>{location.name} • {ownerName} • confiança {location.confidence}</title>
-                  </g>
-                );
+                const controllerName = effectiveController ? (entityNames[effectiveController] ?? effectiveController) : ownerName;
+                const occupied = !!occupation && occupation.controllerId !== occupation.ownerId;
+                const contested = !!occupation?.contested;
+                const className = `territory-marker ${active ? 'active' : ''} ${occupied ? 'occupied' : ''} ${contested ? 'contested' : ''}`;
+                return <g
+                  key={location.id}
+                  className={className}
+                  transform={`translate(${x} ${y})`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => { event.stopPropagation(); if (location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name); }}
+                  onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && location.ownerId && onSelectTerritory) onSelectTerritory(location.ownerId, location.name); }}
+                >
+                  <circle r={active ? 5.5 : 4} />
+                  <circle className="marker-ring" r={active ? 9 : 7} />
+                  {occupation && occupation.progress > 0 && <circle className="occupation-ring" r={11} pathLength={100} strokeDasharray={`${occupation.progress} 100`} transform="rotate(-90)" />}
+                  <title>{location.name} • soberania: {ownerName} • controle: {controllerName}{occupation ? ` • ocupação ${occupation.progress.toFixed(0)}% • batalhas ${occupation.battleCount}` : ''} • confiança ${location.confidence}</title>
+                </g>;
               })}
             </g>
 
