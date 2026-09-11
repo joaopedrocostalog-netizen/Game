@@ -15,15 +15,18 @@ import {
   activeCrisisBetween,
   evaluateCrisis,
   markCrisisEscalated,
+  potentialCrisisSupporters,
   potentialMediators,
+  requestCrisisSupport,
   resetCrises,
   resolveCrisis,
   setCrisisMediator,
+  setCrisisMobilization,
   startDiplomaticCrisis,
   type CrisisAction,
 } from '../engine/crisis';
 import { activeTruceBetween } from '../engine/peace';
-import type { WarGoal } from '../engine/war';
+import type { MobilizationLevel, WarGoal } from '../engine/war';
 import './crisis.css';
 
 const goalLabels: Record<WarGoal, string> = {
@@ -40,20 +43,28 @@ const actionLabels: Record<CrisisAction, string> = {
   mediation: 'Submeter à mediação',
 };
 
+const mobilizationLabels: Record<MobilizationLevel, string> = {
+  none: 'Normal',
+  partial: 'Parcial',
+  general: 'Geral',
+};
+
 type Props = {
   entity: ScenarioEntity;
   entities: ScenarioEntity[];
   simulation: SimulationState;
+  onMobilize: (level: MobilizationLevel) => void;
   onDeclareWar: (targetId: string, goal: WarGoal) => void;
 };
 
-export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }: Props) {
+export function CasusBelliPlanner({ entity, entities, simulation, onMobilize, onDeclareWar }: Props) {
   const targets = entities.filter((item) => item.id !== entity.id);
   const [targetId, setTargetId] = useState(targets[0]?.id ?? '');
   const [casusType, setCasusType] = useState<CasusBelliType>('unjustified');
   const [goal, setGoal] = useState<WarGoal>('territory');
   const [revision, setRevision] = useState(0);
   const [crisisMessage, setCrisisMessage] = useState('');
+  const [supporterDraft, setSupporterDraft] = useState('');
   const target = targets.find((item) => item.id === targetId) ?? targets[0];
   const options = useMemo(() => target ? casusBelliOptions(entity, target, simulation) : [], [entity, target, simulation, revision]);
   const selected = options.find((item) => item.type === casusType) ?? options.find((item) => item.available) ?? options[options.length - 1];
@@ -63,7 +74,8 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
   const crisis = target ? activeCrisisBetween(entity.id, target.id) : undefined;
   const readinessBlocked = (simulation.entities[entity.id]?.militaryReadiness ?? 0) < 28;
   const remaining = preparation && selected && preparation.casusBelliType === selected.type ? Math.max(0, preparation.readyAtElapsedDay - simulation.elapsedDays) : selected?.preparationDays ?? 0;
-  const mediators = target ? potentialMediators(entities, simulation, entity.id, target.id) : [];
+  const mediators = target ? potentialMediators(entities, simulation, entity.id, target.id).filter((item) => !crisis?.supporters.some((support) => support.entityId === item.entity.id)) : [];
+  const supportCandidates = crisis ? potentialCrisisSupporters(entities, simulation, crisis, 'initiator') : [];
   const crisisExpired = !!crisis && simulation.elapsedDays >= crisis.deadlineElapsedDay;
   const canEscalate = !!crisis && (crisis.status === 'escalated' || crisisExpired || crisis.tension >= 82);
 
@@ -88,6 +100,10 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
     if (!selected) return;
     if (!selected.allowedGoals.includes(goal)) setGoal(selected.allowedGoals[0]);
   }, [selected?.type]);
+
+  useEffect(() => {
+    if (!supportCandidates.some((item) => item.entity.id === supporterDraft)) setSupporterDraft(supportCandidates[0]?.entity.id ?? '');
+  }, [crisis?.id, revision]);
 
   function applySimulationSnapshot(nextSimulation: SimulationState) {
     Object.assign(simulation.entities, nextSimulation.entities);
@@ -125,8 +141,8 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
 
   function openCrisis() {
     if (!target || !selected || !ready || truce || crisis) return;
-    startDiplomaticCrisis(entity, target, selected, goal, simulation);
-    setCrisisMessage(`Crise aberta com ${target.name}. A guerra ainda pode ser evitada por concessão, compromisso ou mediação.`);
+    startDiplomaticCrisis(entity, target, selected, goal, simulation, entities);
+    setCrisisMessage(`Crise aberta com ${target.name}. Alianças e alinhamentos externos já estão sendo considerados.`);
     setRevision((value) => value + 1);
   }
 
@@ -134,6 +150,22 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
     if (!crisis) return;
     setCrisisMediator(crisis.id, mediatorId || undefined);
     setCrisisMessage(mediatorId ? `${entities.find((item) => item.id === mediatorId)?.name ?? mediatorId} foi convidado para mediar a crise.` : 'A mediação de terceiros foi removida.');
+    setRevision((value) => value + 1);
+  }
+
+  function changePreventiveMobilization(level: MobilizationLevel) {
+    if (!crisis || crisis.status !== 'active') return;
+    setCrisisMobilization(crisis.id, 'initiator', level);
+    onMobilize(level);
+    setCrisisMessage(level === 'none' ? 'A mobilização preventiva foi reduzida, diminuindo a pressão imediata.' : `Mobilização ${mobilizationLabels[level].toLowerCase()} iniciada. A credibilidade militar aumentou, mas a tensão da crise também subiu.`);
+    setRevision((value) => value + 1);
+  }
+
+  function requestSupport() {
+    if (!crisis || !supporterDraft) return;
+    const result = requestCrisisSupport(crisis.id, supporterDraft, 'initiator', simulation);
+    const supporterName = entities.find((item) => item.id === supporterDraft)?.name ?? supporterDraft;
+    setCrisisMessage(`${supporterName}: ${result.message}`);
     setRevision((value) => value + 1);
   }
 
@@ -158,11 +190,13 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
     applySimulationSnapshot(nextSimulation);
     onDeclareWar(target.id, goal);
     consumePreparation(entity.id, target.id);
-    setCrisisMessage('A crise diplomática fracassou e foi convertida em guerra aberta.');
+    setCrisisMessage('A crise diplomática fracassou e foi convertida em guerra aberta. Aliados formais serão chamados pelo motor de guerra; demais apoios públicos ficam registrados como pressão diplomática.');
     setRevision((value) => value + 1);
   }
 
   const crisisEvaluation = crisis?.status === 'active' ? evaluateCrisis(crisis, simulation, crisis.mediatorId ? 'mediation' : 'compromise') : undefined;
+  const initiatorSupporters = crisis?.supporters.filter((item) => item.side === 'initiator') ?? [];
+  const targetSupporters = crisis?.supporters.filter((item) => item.side === 'target') ?? [];
 
   return <div className="war-planner casus-planner">
     <div className="context-kicker">Preparação diplomática do conflito</div>
@@ -183,8 +217,15 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
       <div className="crisis-head"><div><span>CRISE DIPLOMÁTICA</span><strong>{entity.name} × {target?.name ?? crisis.targetId}</strong></div><b>{crisis.tension.toFixed(0)} tensão</b></div>
       <div className="crisis-track"><i style={{ width: `${crisis.tension}%` }}/></div>
       <div className="crisis-metrics"><span>Prazo <b>{Math.max(0, crisis.deadlineElapsedDay - simulation.elapsedDays)}d</b></span><span>Legitimidade <b>{crisis.legitimacy.toFixed(0)}</b></span><span>Objetivo <b>{goalLabels[crisis.goal]}</b></span></div>
+      {crisisEvaluation && <div className="crisis-balance"><div><span>Bloco de {entity.name}</span><b>{crisisEvaluation.initiatorBlocPower.toFixed(0)}</b></div><div><span>Bloco de {target?.name ?? crisis.targetId}</span><b>{crisisEvaluation.targetBlocPower.toFixed(0)}</b></div></div>}
+      <div className="crisis-blocs">
+        <div><b>Apoio ao iniciador</b>{initiatorSupporters.length ? initiatorSupporters.map((support) => <span key={support.entityId}>{entities.find((item) => item.id === support.entityId)?.name ?? support.entityId} • {support.level === 'military' ? 'compromisso militar' : 'apoio diplomático'}</span>) : <span>Sem apoio externo declarado</span>}</div>
+        <div><b>Apoio ao alvo</b>{targetSupporters.length ? targetSupporters.map((support) => <span key={support.entityId}>{entities.find((item) => item.id === support.entityId)?.name ?? support.entityId} • {support.level === 'military' ? 'compromisso militar' : 'apoio diplomático'}</span>) : <span>Sem apoio externo declarado</span>}</div>
+      </div>
       {crisisEvaluation && <p>{crisisEvaluation.reason} Probabilidade diplomática aproximada: <b>{crisisEvaluation.acceptance.toFixed(0)}%</b>.</p>}
       {crisis.status === 'active' && <>
+        <div className="crisis-mobilization"><span>Mobilização preventiva</span><div>{(['none','partial','general'] as MobilizationLevel[]).map((level) => <button className={crisis.initiatorMobilization === level ? 'active' : ''} key={level} onClick={() => changePreventiveMobilization(level)}>{mobilizationLabels[level]}</button>)}</div><small>Mobilização melhora a pressão militar, mas aumenta a tensão e pode tornar a crise mais difícil de conter.</small></div>
+        {supportCandidates.length > 0 && <div className="crisis-support-request"><label className="casus-field"><span>Solicitar apoio externo</span><select value={supporterDraft} onChange={(event) => setSupporterDraft(event.target.value)}>{supportCandidates.map((item) => <option key={item.entity.id} value={item.entity.id}>{item.entity.name} • disposição {item.willingness.toFixed(0)} • {item.level === 'military' ? 'militar' : 'diplomático'}</option>)}</select></label><button disabled={!supporterDraft} onClick={requestSupport}>Solicitar apoio</button></div>}
         <label className="casus-field"><span>Mediador opcional</span><select value={crisis.mediatorId ?? ''} onChange={(event) => chooseMediator(event.target.value)}><option value="">Sem mediação</option>{mediators.map((item) => <option key={item.entity.id} value={item.entity.id}>{item.entity.name} • aptidão {item.suitability.toFixed(0)}</option>)}</select></label>
         <div className="crisis-actions"><button onClick={() => negotiate('compromise')}>{actionLabels.compromise}</button><button disabled={!crisis.mediatorId} onClick={() => negotiate('mediation')}>{actionLabels.mediation}</button><button className="ultimatum" onClick={() => negotiate('ultimatum')}>{actionLabels.ultimatum}</button></div>
       </>}
@@ -193,6 +234,6 @@ export function CasusBelliPlanner({ entity, entities, simulation, onDeclareWar }
       {crisisMessage && <div className="crisis-message">{crisisMessage}</div>}
     </div>}
 
-    <p className="casus-footnote">Uma justificativa pronta não inicia hostilidades automaticamente. A crise pode ser resolvida por negociação, mediação ou ultimato; somente uma crise fracassada ou vencida pelo prazo pode escalar para guerra.</p>
+    <p className="casus-footnote">Crises podem formar blocos diplomáticos antes da guerra. Aliados formais entram como compromissos militares; outros Estados podem fornecer apoio público sem se tornarem automaticamente beligerantes.</p>
   </div>;
 }
