@@ -1,6 +1,6 @@
 import { locationsForEntity, locationsForYear, type ResolvedLocation } from '../data/territories';
 import type { SimulationState } from './simulation';
-import type { War, WarState } from './war';
+import type { FrontOrder, FrontSide, War, WarState } from './war';
 import type { TerritorialControlState } from './territorialControl';
 
 export type UnitType = 'field-army' | 'garrison' | 'mobile-corps';
@@ -241,13 +241,73 @@ function nearestFriendlyRetreat(unit: ArmyUnit, year: number, control?: Territor
   return options[0]?.location;
 }
 
+function sideForUnit(unit: ArmyUnit, war: War): FrontSide | null {
+  if (war.attackers.includes(unit.entityId)) return 'attacker';
+  if (war.defenders.includes(unit.entityId)) return 'defender';
+  return null;
+}
+
+function explicitFrontForUnit(unit: ArmyUnit, war: War, side: FrontSide) {
+  return war.fronts.find((front) => (side === 'attacker' ? front.attackerAssignments : front.defenderAssignments).includes(unit.id));
+}
+
+function priorityBias(priority: 'low' | 'normal' | 'high' | 'main') {
+  if (priority === 'main') return 900;
+  if (priority === 'high') return 420;
+  if (priority === 'low') return -260;
+  return 0;
+}
+
 function assignedFrontIdForUnit(unit: ArmyUnit, war: War, locations: Map<string, ResolvedLocation>) {
+  const side = sideForUnit(unit, war);
+  if (!side) return undefined;
+  const manual = explicitFrontForUnit(unit, war, side);
+  if (manual) return manual.id;
   const current = locations.get(unit.locationId);
   const ranked = war.fronts
     .filter((front) => front.locationId)
-    .map((front) => ({ front, distance: distanceKm(current, locations.get(front.locationId!)) }))
-    .sort((a, b) => a.distance - b.distance || a.front.id.localeCompare(b.front.id));
+    .map((front) => {
+      const priority = side === 'attacker' ? front.attackerPriority : front.defenderPriority;
+      return { front, score: distanceKm(current, locations.get(front.locationId!)) - priorityBias(priority) };
+    })
+    .sort((a, b) => a.score - b.score || a.front.id.localeCompare(b.front.id));
   return ranked[0]?.front.id;
+}
+
+function operationForSide(front: War['fronts'][number], side: FrontSide): FrontOrder {
+  return side === 'attacker' ? front.attackerOrder : front.defenderOrder;
+}
+
+function formationExposure(order: FrontOrder) {
+  if (order === 'defend') return .78;
+  if (order === 'cautious') return .82;
+  if (order === 'offensive') return 1.15;
+  if (order === 'breakthrough') return 1.36;
+  if (order === 'reserve') return .38;
+  return .52;
+}
+
+function formationConsumption(order: FrontOrder) {
+  if (order === 'defend') return .75;
+  if (order === 'cautious') return .82;
+  if (order === 'offensive') return 1.2;
+  if (order === 'breakthrough') return 1.55;
+  if (order === 'reserve') return .42;
+  return .68;
+}
+
+function beginOrganizedWithdrawal(unit: ArmyUnit, year: number, control: TerritorialControlState, frontLocationId: string) {
+  if (unit.order === 'retreat') return unit;
+  const fallback = nearestFriendlyRetreat(unit, year, control, frontLocationId);
+  if (!fallback) return { ...unit, organization: clamp(unit.organization - 4), morale: clamp(unit.morale - 3) };
+  return {
+    ...unit,
+    destinationId: fallback.id,
+    order: 'retreat' as const,
+    movementProgress: Math.max(6, unit.movementProgress),
+    organization: clamp(unit.organization - 4),
+    morale: clamp(unit.morale - 2),
+  };
 }
 
 export function applyBattleConsequences(
@@ -264,7 +324,7 @@ export function applyBattleConsequences(
   for (const war of warState.wars) {
     if (war.status !== 'active') continue;
     for (const front of war.fronts) {
-      if (!front.locationId || front.intensity < 18) continue;
+      if (!front.locationId || front.intensity < 8) continue;
       const frontLocation = locations.get(front.locationId);
       if (!frontLocation) continue;
       const occupation = control.occupations[front.locationId];
@@ -275,23 +335,29 @@ export function applyBattleConsequences(
       const defenderPressure = front.attackerPower / total;
 
       units = units.map((unit) => {
-        const isAttacker = attackerIds.has(unit.entityId);
-        const isDefender = defenderIds.has(unit.entityId);
-        if (!isAttacker && !isDefender) return unit;
-        if (assignedFrontIdForUnit(unit, war, locations) !== front.id) return unit;
+        const side = sideForUnit(unit, war);
+        if (!side || assignedFrontIdForUnit(unit, war, locations) !== front.id) return unit;
         const unitLocation = locations.get(unit.locationId);
         const distance = distanceKm(unitLocation, frontLocation);
         if (distance > 1800) return unit;
+
+        const operation = operationForSide(front, side);
+        if (operation === 'withdraw' && distance <= 900) {
+          return beginOrganizedWithdrawal(unit, simulation.date.year, control, front.locationId!);
+        }
+
         const participation = distance < 300 ? 1 : distance < 800 ? .72 : .42;
-        const pressure = isAttacker ? attackerPressure : defenderPressure;
-        const logistics = isAttacker ? front.attackerLogistics : front.defenderLogistics;
-        const exposure = participation * (front.intensity / 100) * (0.65 + pressure) * (1.2 - logistics / 250);
-        const casualtyRate = clamp(days * exposure * .00075, 0, .16);
+        const pressure = side === 'attacker' ? attackerPressure : defenderPressure;
+        const logistics = side === 'attacker' ? front.attackerLogistics : front.defenderLogistics;
+        const exposure = participation * (front.intensity / 100) * (0.65 + pressure) * (1.2 - logistics / 250) * formationExposure(operation);
+        const casualtyRate = clamp(days * exposure * .00075, 0, .18);
+        const consumption = formationConsumption(operation) * participation * Math.max(.15, front.intensity / 100);
         const personnel = Math.max(0, Math.round(unit.personnel * (1 - casualtyRate)));
         const strengthLoss = casualtyRate * 120;
         const moraleLoss = casualtyRate * 95;
-        const organizationLoss = casualtyRate * 110;
-        const equipmentLoss = casualtyRate * 70;
+        const organizationLoss = casualtyRate * 110 + days * consumption * .018;
+        const equipmentLoss = casualtyRate * 70 + days * consumption * .012;
+        const supplyLoss = days * consumption * .045;
         return {
           ...unit,
           personnel,
@@ -299,6 +365,7 @@ export function applyBattleConsequences(
           morale: clamp(unit.morale - moraleLoss),
           organization: clamp(unit.organization - organizationLoss),
           equipment: clamp(unit.equipment - equipmentLoss),
+          supply: clamp(unit.supply - supplyLoss),
         };
       });
 
