@@ -4,6 +4,7 @@ import { Brain, ChevronRight, FastForward, Globe2, Landmark, Map, Pause, Play, S
 import { WorldMap } from './components/WorldMap';
 import { SystemDetailPanel } from './components/SystemDetailPanel';
 import { DiplomaticInbox } from './components/DiplomaticInbox';
+import { WarConsole } from './components/WarConsole';
 import { scenarios, type ScenarioEntity } from './data/scenarios';
 import {
   applyDiplomaticAction,
@@ -16,6 +17,15 @@ import {
   type ProposalDecision,
   type SimulationState,
 } from './engine/simulation';
+import {
+  createInitialWarState,
+  declareWar,
+  setMobilization,
+  simulateWarDays,
+  type MobilizationLevel,
+  type WarGoal,
+  type WarState,
+} from './engine/war';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
@@ -68,6 +78,7 @@ function App() {
   const [activeSystem, setActiveSystem] = useState<SystemName>('Economia');
   const [speed, setSpeed] = useState(0);
   const [simulation, setSimulation] = useState<SimulationState>(() => makeSimulation(scenarios[0].year, scenarios[0].entities));
+  const [warState, setWarState] = useState<WarState>(() => createInitialWarState());
   const [command, setCommand] = useState('');
   const [advisorText, setAdvisorText] = useState('Selecione uma entidade, consulte um sistema ou dê uma ordem. O Conselheiro só usará informações disponíveis ao seu Estado.');
 
@@ -77,12 +88,17 @@ function App() {
   const shownDate = formatDate(simulation.date);
   const entityNames = useMemo(() => Object.fromEntries(scenario.entities.map((item) => [item.id, item.name])), [scenario]);
   const pendingProposals = simulation.proposals.filter((item) => item.toId === entity.id && item.status === 'pending').length;
+  const activeWars = warState.wars.filter((war) => war.status === 'active').length;
 
   useEffect(() => {
     if (speed === 0) return;
-    const interval = window.setInterval(() => setSimulation((state) => simulateDays(state, 1)), Math.max(100, 900 / speed));
-    return () => window.clearInterval(interval);
-  }, [speed]);
+    const timer = window.setTimeout(() => {
+      const nextSimulation = simulateDays(simulation, 1);
+      setSimulation(nextSimulation);
+      setWarState((current) => simulateWarDays(current, nextSimulation, 1));
+    }, Math.max(100, 900 / speed));
+    return () => window.clearTimeout(timer);
+  }, [speed, simulation]);
 
   function changeScenario(id: string) {
     const next = scenarios.find((item) => item.id === id) ?? scenarios[0];
@@ -90,13 +106,16 @@ function App() {
     setSelectedId(next.entities[0].id);
     setMapSelection(null);
     setSimulation(makeSimulation(next.year, next.entities));
+    setWarState(createInitialWarState());
     setSpeed(0);
     setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'Locations históricas já podem representar entidades do período; as fronteiras completas continuam sendo expandidas sem reutilizar limites modernos.'}`);
   }
 
   function advanceDays(days: number, label: string) {
-    setSimulation((state) => simulateDays(state, days));
-    setAdvisorText(`Tempo avançado em ${label}. O motor executou os ticks correspondentes, inclusive decisões trimestrais da IA estratégica.`);
+    const nextSimulation = simulateDays(simulation, days);
+    setSimulation(nextSimulation);
+    setWarState((current) => simulateWarDays(current, nextSimulation, days));
+    setAdvisorText(`Tempo avançado em ${label}. O motor executou ticks econômicos, estratégicos, diplomáticos e militares.`);
   }
 
   function handleMapCountry(name: string) {
@@ -151,6 +170,23 @@ function App() {
     else setAdvisorText(`Uma contraproposta foi enviada a ${fromName}. A IA avaliou os novos termos com base em seus interesses, confiança, abertura e tolerância a risco.`);
   }
 
+  function handleMobilization(level: MobilizationLevel) {
+    setWarState((state) => setMobilization(state, entity.id, level));
+    const label = level === 'general' ? 'mobilização geral' : level === 'partial' ? 'mobilização parcial' : 'postura militar normal';
+    setAdvisorText(`${entity.name} adotou ${label}. Isso altera o poder disponível em conflitos, mas custos econômicos detalhados serão conectados na próxima camada logística/fiscal.`);
+  }
+
+  function handleDeclareWar(targetId: string, goal: WarGoal) {
+    const target = scenario.entities.find((item) => item.id === targetId);
+    const result = declareWar(warState, simulation, entity.id, targetId, goal);
+    setWarState(result.state);
+    if (result.error) setAdvisorText(`A guerra não foi iniciada: ${result.message}`);
+    else {
+      setMapMode('Militar');
+      setAdvisorText(`${entity.name} declarou guerra a ${target?.name ?? targetId}. ${result.message} As frentes agora avançam com o tempo.`);
+    }
+  }
+
   function submitCommand(event: React.FormEvent) {
     event.preventDefault();
     const trimmed = command.trim();
@@ -178,7 +214,7 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.7</span></div></div>
+        <div className="brand"><div className="brand-mark"><Globe2 size={19} /></div><div><strong>WORLD STATE</strong><span>Grand Strategy Simulator • alpha 0.8</span></div></div>
         <div className="time-center">
           <button className={speed === 0 ? 'icon-button active' : 'icon-button'} onClick={() => setSpeed(0)} aria-label="Pausar"><Pause size={16} /></button>
           {[1, 2, 4, 8].map((value) => <button key={value} className={speed === value ? 'speed active' : 'speed'} onClick={() => setSpeed(value)}>{value}×</button>)}
@@ -225,7 +261,7 @@ function App() {
           </div>
           <div className="advance-bar panel">
             <button onClick={() => advanceDays(1, '1 dia')}>+1 dia</button><button onClick={() => advanceDays(7, '1 semana')}>+1 semana</button><button onClick={() => advanceDays(30, '1 mês')}>+1 mês</button><button onClick={() => advanceDays(365, '1 ano')}>+1 ano</button>
-            <span>{scenario.subtitle} • {speed === 0 ? 'Pausado' : `${speed}×`} • tick #{simulation.elapsedDays}</span>
+            <span>{scenario.subtitle} • {speed === 0 ? 'Pausado' : `${speed}×`} • tick #{simulation.elapsedDays} • guerras {activeWars}</span>
           </div>
         </section>
 
@@ -241,7 +277,8 @@ function App() {
             <p>{systemInfo[activeSystem]}</p>
             {runtime && <SystemSnapshot activeSystem={activeSystem} runtime={runtime} />}
             {uiMode === 'Avançada' && <SystemDetailPanel system={activeSystem} entityId={entity.id} entityName={entity.name} year={simulation.date.year} runtime={runtime} allRuntimes={simulation.entities} diplomacy={simulation.diplomacy} treaties={simulation.treaties} onDiplomaticAction={handleDiplomaticAction} />}
-            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Tratados</b>{simulation.treaties.filter((item) => item.active).length}</span><span><b>Propostas</b>{pendingProposals}</span></div>}
+            {activeSystem === 'Militar' && <WarConsole entityId={entity.id} entities={scenario.entities} simulation={simulation} warState={warState} onMobilize={handleMobilization} onDeclareWar={handleDeclareWar} />}
+            {uiMode === 'Avançada' && <div className="detail-grid"><span><b>Época</b>{simulation.date.year}</span><span><b>Modo</b>Avançado</span><span><b>Tratados</b>{simulation.treaties.filter((item) => item.active).length}</span><span><b>Guerras</b>{activeWars}</span></div>}
           </div>
           <div className="section-title history-title"><ScrollText size={12}/> História recente</div>
           <div className="history-feed">{simulation.events.length === 0 ? <div className="empty-history">Nenhum acontecimento registrado ainda. Avance o tempo ou dê uma ordem.</div> : simulation.events.slice(0, 6).map((item) => <div className="history-item" key={item.id}><span>{String(item.date.day).padStart(2, '0')}/{String(item.date.month).padStart(2, '0')}/{item.date.year}</span><strong>{item.title}</strong><p>{item.text}</p></div>)}</div>
