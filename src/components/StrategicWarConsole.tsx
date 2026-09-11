@@ -12,6 +12,7 @@ import { AllianceCommandPanel } from './AllianceCommandPanel';
 import { PostWarConferencePanel } from './PostWarConferencePanel';
 import { PostWarDisputePanel } from './PostWarDisputePanel';
 import { GeopoliticalAlignmentPanel } from './GeopoliticalAlignmentPanel';
+import { DiplomaticOrganizationsPanel } from './DiplomaticOrganizationsPanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -32,6 +33,7 @@ export function StrategicWarConsole(props: Props) {
   if (!entity) return null;
   return <div className="strategic-war-wrapper">
     <GeopoliticalAlignmentPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
+    <DiplomaticOrganizationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
     <CrisisConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} onWarStateChange={props.onWarStateChange}/>
     <PostWarDisputePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
