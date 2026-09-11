@@ -7,6 +7,7 @@ import {
   type WarState,
   warsForEntity,
 } from '../engine/war';
+import { ArmyOperations } from './ArmyOperations';
 import './war-console.css';
 
 type Props = {
@@ -84,5 +85,7 @@ export function WarConsole({ entityId, entities, simulation, warState, onMobiliz
         </div>;
       })}
     </div>
+
+    <ArmyOperations entityId={entityId} year={simulation.date.year} simulation={simulation} warState={warState} />
   </div>;
 }
