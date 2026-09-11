@@ -1,5 +1,6 @@
 import type { ArmyState } from './army';
 import { jointForceState } from './jointOrganizationForces';
+import { latestFrontIntelligence, militaryIntelligenceState } from './militaryIntelligence';
 import { theaterCommandState } from './multinationalTheaterCommand';
 import type { SimulationState, WorldEvent } from './simulation';
 import {
@@ -14,6 +15,9 @@ import {
 export type OperationPhase = 'preparation' | 'concentration' | 'assault' | 'exploitation' | 'consolidation';
 export type OperationStatus = 'preparing' | 'executing' | 'paused' | 'completed' | 'aborted';
 export type OperationTempo = 'deliberate' | 'standard' | 'rapid';
+export type OperationIntelligenceAssessment = 'unknown' | 'poor' | 'adequate' | 'good' | 'excellent';
+export type OperationSurpriseState = 'none' | 'advantage' | 'risk' | 'suffered';
+export type EnemyOperationalReaction = 'none' | 'reinforcing' | 'entrenching' | 'counterattack';
 
 export type OperationalCampaignPlan = {
   id: string;
@@ -35,6 +39,13 @@ export type OperationalCampaignPlan = {
   executionProgress: number;
   risk: number;
   lastProcessedElapsedDay: number;
+  intelligenceAssessment: OperationIntelligenceAssessment;
+  surpriseState: OperationSurpriseState;
+  compromised: boolean;
+  enemyReaction: EnemyOperationalReaction;
+  lastIntelConfidence: number;
+  compromisedAtElapsedDay?: number;
+  surpriseAtElapsedDay?: number;
   pauseReason?: string;
   abortReason?: string;
 };
@@ -44,6 +55,12 @@ type OperationalPlanGlobal = typeof globalThis & { __WORLD_STATE_OPERATIONAL_PLA
 
 function clamp(value: number, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
+}
+
+function hash(text: string) {
+  let h = 2166136261;
+  for (const char of text) h = Math.imul(h ^ char.charCodeAt(0), 16777619);
+  return Math.abs(h >>> 0);
 }
 
 function rootState(): OperationalPlanState {
@@ -123,6 +140,86 @@ function eventFor(plan: OperationalCampaignPlan, simulation: SimulationState, ti
   };
 }
 
+function assessmentFor(confidence: number, freshness?: string): OperationIntelligenceAssessment {
+  const freshnessPenalty = freshness === 'obsolete' ? 24 : freshness === 'stale' ? 14 : freshness === 'recent' ? 5 : 0;
+  const effective = confidence - freshnessPenalty;
+  if (effective >= 82) return 'excellent';
+  if (effective >= 66) return 'good';
+  if (effective >= 48) return 'adequate';
+  if (effective >= 28) return 'poor';
+  return 'unknown';
+}
+
+function intelligenceProfile(plan: OperationalCampaignPlan, simulation: SimulationState) {
+  const hq = hqById(plan.hqId);
+  if (!hq) return { assessment: 'unknown' as OperationIntelligenceAssessment, confidence: 0, riskModifier: 18, progressMultiplier: .68, surprisePressure: 74 };
+  const report = latestFrontIntelligence(hq.commanderEntityId, plan.warId, plan.frontId, simulation);
+  if (!report) return { assessment: 'unknown' as OperationIntelligenceAssessment, confidence: 0, riskModifier: 18, progressMultiplier: .68, surprisePressure: 74 };
+  const assessment = assessmentFor(report.confidenceScore, report.freshness);
+  const riskModifier = report.freshness === 'obsolete' ? 22 : report.freshness === 'stale' ? 14 : report.freshness === 'recent' ? 6 : assessment === 'excellent' ? -8 : assessment === 'good' ? -4 : assessment === 'poor' ? 10 : 2;
+  const progressMultiplier = assessment === 'excellent' ? 1.18 : assessment === 'good' ? 1.1 : assessment === 'adequate' ? 1 : assessment === 'poor' ? .82 : .68;
+  const surprisePressure = clamp(report.uncertainty * .68 + (report.surpriseRisk === 'severe' ? 28 : report.surpriseRisk === 'elevated' ? 18 : report.surpriseRisk === 'guarded' ? 8 : -4));
+  return { assessment, confidence: report.confidenceScore, riskModifier, progressMultiplier, surprisePressure };
+}
+
+function sideMembers(plan: OperationalCampaignPlan, warState: WarState) {
+  const hq = hqById(plan.hqId);
+  const war = warState.wars.find((item) => item.id === plan.warId);
+  if (!hq || !war) return { friendly: [] as string[], enemy: [] as string[] };
+  return hq.side === 'attackers' ? { friendly: war.attackers, enemy: war.defenders } : { friendly: war.defenders, enemy: war.attackers };
+}
+
+function detectionProfile(plan: OperationalCampaignPlan, simulation: SimulationState, warState: WarState) {
+  const hq = hqById(plan.hqId);
+  const sides = sideMembers(plan, warState);
+  if (!hq || !sides.enemy.length) return { detected: false, score: 0, reaction: 'none' as EnemyOperationalReaction };
+  const enemyRuntimes = sides.enemy.map((id) => simulation.entities[id]).filter(Boolean);
+  const enemyTechnology = enemyRuntimes.length ? enemyRuntimes.reduce((sum, item) => sum + item.technology, 0) / enemyRuntimes.length : 35;
+  const enemyTreasury = enemyRuntimes.length ? enemyRuntimes.reduce((sum, item) => sum + item.treasuryIndex, 0) / enemyRuntimes.length : 35;
+  const daysVisible = Math.max(0, simulation.elapsedDays - plan.createdAtElapsedDay);
+  const deception = militaryIntelligenceState().deception[`${plan.warId}::${hq.side}`] ?? 'none';
+  const concealment = deception === 'concealment' ? 17 : deception === 'false_concentration' ? 11 : deception === 'feigned_weakness' ? 7 : 0;
+  const tempoExposure = plan.tempo === 'rapid' ? 12 : plan.tempo === 'deliberate' ? -5 : 3;
+  const phaseExposure = plan.phase === 'concentration' ? 13 : plan.phase === 'assault' ? 18 : plan.phase === 'preparation' ? 5 : 9;
+  const eraAwareness = simulation.date.year < 1700 ? -13 : simulation.date.year < 1900 ? -6 : simulation.date.year < 1945 ? 1 : 7;
+  const score = clamp(enemyTechnology * .34 + enemyTreasury * .1 + daysVisible * .42 + tempoExposure + phaseExposure + eraAwareness - concealment);
+  const roll = hash(`${plan.id}:detection:${Math.floor(simulation.elapsedDays / 7)}`) % 100;
+  const detected = score >= 38 && roll < score;
+  const reaction: EnemyOperationalReaction = !detected ? 'none' : score >= 78 ? 'counterattack' : score >= 62 ? 'entrenching' : 'reinforcing';
+  return { detected, score, reaction };
+}
+
+function applyEnemyReaction(plan: OperationalCampaignPlan, reaction: EnemyOperationalReaction, warState: WarState) {
+  const hq = hqById(plan.hqId);
+  const war = warState.wars.find((item) => item.id === plan.warId && item.status === 'active');
+  if (!hq || !war || reaction === 'none') return warState;
+  const enemySide = hq.side === 'attackers' ? 'defender' : 'attacker';
+  let next = setFrontPriority(warState, war.id, plan.frontId, enemySide, reaction === 'counterattack' ? 'main' : 'high');
+  next = setFrontOrder(next, war.id, plan.frontId, enemySide, reaction === 'counterattack' ? 'offensive' : reaction === 'entrenching' ? 'defend' : 'cautious');
+  return next;
+}
+
+function applyOperationalSurprise(plan: OperationalCampaignPlan, simulation: SimulationState, armyState: ArmyState, pressure: number) {
+  const units = jointUnits(plan, armyState);
+  if (!units.length) return { armyState, suffered: false };
+  const roll = hash(`${plan.id}:surprise:${simulation.elapsedDays}`) % 100;
+  if (roll >= pressure) return { armyState, suffered: false };
+  const severity = clamp(4 + pressure * .08, 4, 13);
+  const ids = new Set(units.map((unit) => unit.id));
+  return {
+    suffered: true,
+    armyState: {
+      ...armyState,
+      units: armyState.units.map((unit) => ids.has(unit.id) ? {
+        ...unit,
+        organization: clamp(unit.organization - severity),
+        morale: clamp(unit.morale - severity * .65),
+        supply: clamp(unit.supply - severity * .35),
+      } : unit),
+    },
+  };
+}
+
 export function createOperationalCampaignPlan(
   hqId: string,
   frontId: string,
@@ -137,6 +234,8 @@ export function createOperationalCampaignPlan(
   if (rootState().plans.some((plan) => plan.hqId === hqId && plan.frontId === frontId && !['completed', 'aborted'].includes(plan.status))) return undefined;
   const prepDays = phaseDuration('preparation', tempo, simulation.date.year);
   const logisticsRequirement = tempo === 'rapid' ? 68 : tempo === 'deliberate' ? 54 : 60;
+  const intel = latestFrontIntelligence(hq.commanderEntityId, hq.warId, frontId, simulation);
+  const intelligenceAssessment = intel ? assessmentFor(intel.confidenceScore, intel.freshness) : 'unknown';
   const plan: OperationalCampaignPlan = {
     id: `operation-${hqId}-${frontId}-${simulation.elapsedDays}`,
     hqId,
@@ -157,6 +256,11 @@ export function createOperationalCampaignPlan(
     executionProgress: 0,
     risk: tempo === 'rapid' ? 62 : tempo === 'deliberate' ? 34 : 46,
     lastProcessedElapsedDay: simulation.elapsedDays,
+    intelligenceAssessment,
+    surpriseState: intelligenceAssessment === 'excellent' || intelligenceAssessment === 'good' ? 'advantage' : intelligenceAssessment === 'poor' || intelligenceAssessment === 'unknown' ? 'risk' : 'none',
+    compromised: false,
+    enemyReaction: 'none',
+    lastIntelConfidence: intel?.confidenceScore ?? 0,
   };
   publish({ plans: [plan, ...rootState().plans].slice(0, 40) });
   return plan;
@@ -232,20 +336,63 @@ export function processOperationalCampaignPlans(simulation: SimulationState, arm
       changed = true;
       return { ...plan, status: 'aborted' as const, abortReason: 'A guerra terminou antes da conclusão da operação.', lastProcessedElapsedDay: simulation.elapsedDays };
     }
+
+    const intel = intelligenceProfile(plan, nextSimulation);
+    plan.intelligenceAssessment = intel.assessment;
+    plan.lastIntelConfidence = intel.confidence;
+    plan.surpriseState = intel.assessment === 'excellent' || intel.assessment === 'good' ? 'advantage' : intel.assessment === 'poor' || intel.assessment === 'unknown' ? 'risk' : 'none';
+
+    if (!plan.compromised && (plan.phase === 'preparation' || plan.phase === 'concentration')) {
+      const detection = detectionProfile(plan, nextSimulation, nextWar);
+      if (detection.detected) {
+        plan.compromised = true;
+        plan.compromisedAtElapsedDay = simulation.elapsedDays;
+        plan.enemyReaction = detection.reaction;
+        plan.risk = clamp(plan.risk + 8 + detection.score * .08);
+        nextWar = applyEnemyReaction(plan, detection.reaction, nextWar);
+        nextSimulation = {
+          ...nextSimulation,
+          events: [eventFor(plan, nextSimulation, 'Preparação operacional comprometida', `${plan.name} apresenta sinais de ter sido detectada pelo adversário. A frente inimiga está reagindo antes do ataque.`), ...nextSimulation.events].slice(0, 50),
+        };
+        changed = true;
+      }
+    } else if (plan.compromised && plan.enemyReaction !== 'none') {
+      nextWar = applyEnemyReaction(plan, plan.enemyReaction, nextWar);
+    }
+
     const metrics = operationalMetrics(plan, nextArmy);
     const phaseElapsed = simulation.elapsedDays - plan.phaseStartedAtElapsedDay;
     const duration = phaseDuration(plan.phase, plan.tempo, simulation.date.year);
     const logisticsFactor = clamp(metrics.supply / Math.max(1, plan.logisticsRequirement), 0, 1.25);
     const commandFactor = clamp((metrics.organization + metrics.morale) / 140, .35, 1.2);
+    const intelPrepFactor = intel.assessment === 'excellent' ? 1.08 : intel.assessment === 'good' ? 1.04 : intel.assessment === 'poor' ? .88 : intel.assessment === 'unknown' ? .76 : 1;
 
     if (plan.phase === 'preparation') {
-      plan.preparationProgress = clamp((phaseElapsed / duration) * 72 + logisticsFactor * 18 + commandFactor * 10);
+      plan.preparationProgress = clamp(((phaseElapsed / duration) * 72 + logisticsFactor * 18 + commandFactor * 10) * intelPrepFactor - (plan.compromised ? 5 : 0));
       if (metrics.supply < plan.logisticsRequirement * .55) {
         plan.status = 'paused';
         plan.pauseReason = 'Preparação suspensa: abastecimento abaixo do mínimo operacional.';
-        nextSimulation = { ...nextSimulation, events: [eventFor(plan, nextSimulation, 'Operação atrasada por logística', `${plan.name} foi suspensa porque o abastecimento médio das formações caiu para ${metrics.supply.toFixed(0)}%.`), ...nextSimulation.events].slice(0, 50) };
+        nextSimulation = { ...nextSimulation, events: [eventFor(plan, nextSimulation, 'Operação atrasada por logística', `${plan.name} foi suspensa porque o abastecimento das formações ficou abaixo do necessário.`), ...nextSimulation.events].slice(0, 50) };
         changed = true;
         return { ...plan, lastProcessedElapsedDay: simulation.elapsedDays };
+      }
+    }
+
+    const enteringAssault = plan.phase === 'assault' && plan.surpriseAtElapsedDay === undefined;
+    if (enteringAssault && intel.surprisePressure >= 42) {
+      const surprise = applyOperationalSurprise(plan, nextSimulation, nextArmy, clamp(intel.surprisePressure + (plan.compromised ? 12 : 0)));
+      if (surprise.suffered) {
+        nextArmy = surprise.armyState;
+        plan.surpriseState = 'suffered';
+        plan.surpriseAtElapsedDay = simulation.elapsedDays;
+        plan.risk = clamp(plan.risk + 13);
+        nextSimulation = {
+          ...nextSimulation,
+          events: [eventFor(plan, nextSimulation, 'Surpresa operacional', `${plan.name} encontrou resistência ou concentração inimiga diferente do quadro esperado. A organização inicial do ataque foi prejudicada.`), ...nextSimulation.events].slice(0, 50),
+        };
+        changed = true;
+      } else {
+        plan.surpriseAtElapsedDay = simulation.elapsedDays;
       }
     }
 
@@ -255,9 +402,13 @@ export function processOperationalCampaignPlans(simulation: SimulationState, arm
 
     const front = nextWar.wars.find((item) => item.id === plan.warId)?.fronts.find((item) => item.id === plan.frontId);
     const frontProgress = front?.progress ?? 50;
-    const executionGain = plan.phase === 'assault' || plan.phase === 'exploitation' ? Math.max(0, (frontProgress - 50) * .15) : 0;
+    const compromisePenalty = plan.compromised ? .82 : 1;
+    const surprisePenalty = plan.surpriseState === 'suffered' ? .72 : 1;
+    const executionGain = plan.phase === 'assault' || plan.phase === 'exploitation'
+      ? Math.max(0, (frontProgress - 50) * .15) * intel.progressMultiplier * compromisePenalty * surprisePenalty
+      : 0;
     plan.executionProgress = clamp(plan.executionProgress + executionGain);
-    plan.risk = clamp(plan.risk + (100 - metrics.readiness) * .025 + (plan.phase === 'assault' ? 1.5 : -.3));
+    plan.risk = clamp(plan.risk + (100 - metrics.readiness) * .025 + (plan.phase === 'assault' ? 1.5 : -.3) + intel.riskModifier * .08 + (plan.compromised ? .8 : 0));
 
     if ((plan.phase === 'assault' || plan.phase === 'exploitation') && (metrics.supply < 22 || metrics.morale < 24 || metrics.organization < 22)) {
       plan.status = 'paused';
@@ -267,7 +418,8 @@ export function processOperationalCampaignPlans(simulation: SimulationState, arm
       return { ...plan, lastProcessedElapsedDay: simulation.elapsedDays };
     }
 
-    const readyForNext = phaseElapsed >= duration || (plan.phase === 'assault' && frontProgress >= 68) || (plan.phase === 'exploitation' && frontProgress >= 78);
+    const intelDelay = intel.assessment === 'poor' ? 4 : intel.assessment === 'unknown' ? 8 : 0;
+    const readyForNext = phaseElapsed >= duration + intelDelay || (plan.phase === 'assault' && frontProgress >= 68) || (plan.phase === 'exploitation' && frontProgress >= 78);
     if (readyForNext) {
       const following = nextPhase(plan.phase);
       if (!following) {
@@ -287,8 +439,7 @@ export function processOperationalCampaignPlans(simulation: SimulationState, arm
     return plan;
   });
 
-  if (changed || plans.some((plan, index) => plan !== state.plans[index])) publish({ plans });
-  else publish({ plans });
+  publish({ plans });
   return { simulation: nextSimulation, armyState: nextArmy, warState: nextWar, changed: changed || nextArmy !== armyState || nextWar !== warState };
 }
 
