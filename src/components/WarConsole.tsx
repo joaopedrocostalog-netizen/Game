@@ -3,6 +3,7 @@ import type { ScenarioEntity } from '../data/scenarios';
 import type { SimulationState } from '../engine/simulation';
 import type { TerritorialControlState } from '../engine/territorialControl';
 import type { ArmyState } from '../engine/army';
+import { evaluatePeaceOffer, resolvePeaceOffer, type PeaceTerm } from '../engine/peace';
 import {
   type FrontOrder,
   type FrontPriority,
@@ -39,6 +40,12 @@ const terrainLabels: Record<string, string> = { plains: 'Planícies', hills: 'Co
 const outcomeLabels = { 'attacker-advance': 'Avanço atacante', 'defender-hold': 'Defesa sustentada', contested: 'Combate inconclusivo' };
 const priorityLabels: Record<FrontPriority, string> = { low: 'Baixa', normal: 'Normal', high: 'Alta', main: 'Ofensiva principal' };
 const orderLabels: Record<FrontOrder, string> = { defend: 'Defender', cautious: 'Avanço cauteloso', offensive: 'Ofensiva', breakthrough: 'Ruptura', reserve: 'Reserva', withdraw: 'Retirada organizada' };
+const peaceLabels: Record<PeaceTerm, string> = {
+  status_quo: 'Cessar-fogo / status quo',
+  reparations: 'Reparações financeiras',
+  limited_annexation: 'Anexação territorial limitada',
+  recognition: 'Reconhecimento político',
+};
 const orderHints: Record<FrontOrder, string> = {
   defend: 'Menos perdas e maior resistência, mas pouco avanço.',
   cautious: 'Preserva organização e logística com avanço limitado.',
@@ -47,6 +54,8 @@ const orderHints: Record<FrontOrder, string> = {
   reserve: 'Reduz exposição e conserva força para outra fase da campanha.',
   withdraw: 'Cede terreno para preservar tropas e reorganizar a linha.',
 };
+
+type ControlGlobal = typeof globalThis & { __WORLD_STATE_TERRITORIAL_CONTROL__?: TerritorialControlState };
 
 function SideList({ ids, names }: { ids: string[]; names: Record<string, string> }) {
   return <div className="war-side-list">{ids.map((id) => <span key={id}>{names[id] ?? id}</span>)}</div>;
@@ -57,6 +66,8 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
   const [targetId, setTargetId] = useState(targets[0]?.id ?? '');
   const [goal, setGoal] = useState<WarGoal>('territory');
   const [assignmentDraft, setAssignmentDraft] = useState<Record<string, string>>({});
+  const [peaceDraft, setPeaceDraft] = useState<Record<string, PeaceTerm>>({});
+  const [peaceMessage, setPeaceMessage] = useState<Record<string, string>>({});
   const names = useMemo(() => Object.fromEntries(entities.map((item) => [item.id, item.name])), [entities]);
   const wars = warsForEntity(warState, entityId);
   const mobilization = warState.mobilization[entityId] ?? 'none';
@@ -68,6 +79,25 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
     if (war.attackers.includes(entityId)) return 'attacker';
     if (war.defenders.includes(entityId)) return 'defender';
     return null;
+  }
+
+  function submitPeace(war: WarState['wars'][number], side: FrontSide) {
+    const term = peaceDraft[war.id] ?? 'status_quo';
+    const result = resolvePeaceOffer(warState, territorialControl, simulation, war.id, side, term);
+    setPeaceMessage((current) => ({ ...current, [war.id]: result.message }));
+    if (!result.accepted) return;
+
+    Object.assign(simulation.entities, result.simulation.entities);
+    Object.keys(territorialControl.occupations).forEach((key) => delete territorialControl.occupations[key]);
+    Object.assign(territorialControl.occupations, result.territorialControl.occupations);
+    const publishedControl: TerritorialControlState = {
+      ...territorialControl,
+      occupations: { ...territorialControl.occupations },
+      battles: [...territorialControl.battles],
+    };
+    (globalThis as ControlGlobal).__WORLD_STATE_TERRITORIAL_CONTROL__ = publishedControl;
+    window.dispatchEvent(new CustomEvent('world-state-territorial-control', { detail: publishedControl }));
+    onWarStateChange(result.warState);
   }
 
   return <div className="war-console">
@@ -93,11 +123,20 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
       <div className="context-kicker">Conflitos da entidade</div>
       {wars.length === 0 ? <div className="war-empty">Nenhum conflito armado registrado para esta entidade.</div> : wars.slice(0, 5).map((war) => {
         const side = sideForWar(war);
+        const term = peaceDraft[war.id] ?? 'status_quo';
+        const peaceEvaluation = side ? evaluatePeaceOffer(war, side, term, territorialControl) : null;
         return <div className={`war-card ${war.status}`} key={war.id}>
           <div className="war-card-head"><strong>{names[war.attackerId] ?? war.attackerId} × {names[war.defenderId] ?? war.defenderId}</strong><span>{war.status === 'active' ? 'EM GUERRA' : war.victor === 'stalemate' ? 'IMPASSE' : 'ENCERRADA'}</span></div>
           <div className="war-goal">Objetivo: {goalLabels[war.goal]} • {war.fronts.length} frente(s)</div>
           <div className="war-sides"><div><b>Atacantes</b><SideList ids={war.attackers} names={names}/></div><div><b>Defensores</b><SideList ids={war.defenders} names={names}/></div></div>
           <div className="war-score"><span>Defensores</span><div><i style={{ width: `${Math.max(2, Math.min(98, 50 + war.score / 2))}%` }}/></div><span>Atacantes</span></div>
+          {side && war.status === 'active' && peaceEvaluation && <div className="peace-box">
+            <div className="context-kicker">Negociação de paz</div>
+            <div className="peace-controls"><select value={term} onChange={(event) => setPeaceDraft((current) => ({ ...current, [war.id]: event.target.value as PeaceTerm }))}>{Object.entries(peaceLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button disabled={!peaceEvaluation.eligible} onClick={() => submitPeace(war, side)}>Propor termos</button></div>
+            <div className="peace-estimate"><span>Aceitação estimada</span><b>{peaceEvaluation.acceptance.toFixed(0)}%</b><small>alavancagem {peaceEvaluation.leverage.toFixed(0)} • locations ocupadas elegíveis {peaceEvaluation.occupiedLocations}</small></div>
+            <p>{peaceEvaluation.reason}</p>
+            {peaceMessage[war.id] && <div className="peace-result">{peaceMessage[war.id]}</div>}
+          </div>}
           {war.fronts.map((front) => {
             const occupation = front.locationId ? territorialControl.occupations[front.locationId] : undefined;
             const battle = territorialControl.battles.find((item) => item.warId === war.id && item.frontId === front.id);
