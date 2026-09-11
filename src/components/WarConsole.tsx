@@ -4,6 +4,7 @@ import type { SimulationState } from '../engine/simulation';
 import type { TerritorialControlState } from '../engine/territorialControl';
 import type { ArmyState } from '../engine/army';
 import {
+  type FrontOrder,
   type FrontPriority,
   type FrontSide,
   type MobilizationLevel,
@@ -11,6 +12,7 @@ import {
   type WarState,
   assignUnitToFront,
   clearUnitFrontAssignment,
+  setFrontOrder,
   setFrontPriority,
   warsForEntity,
 } from '../engine/war';
@@ -36,6 +38,15 @@ const goalLabels: Record<WarGoal, string> = {
 const terrainLabels: Record<string, string> = { plains: 'Planícies', hills: 'Colinas', mountains: 'Montanhas', coastal: 'Litoral', forest: 'Floresta', desert: 'Deserto', mixed: 'Terreno misto' };
 const outcomeLabels = { 'attacker-advance': 'Avanço atacante', 'defender-hold': 'Defesa sustentada', contested: 'Combate inconclusivo' };
 const priorityLabels: Record<FrontPriority, string> = { low: 'Baixa', normal: 'Normal', high: 'Alta', main: 'Ofensiva principal' };
+const orderLabels: Record<FrontOrder, string> = { defend: 'Defender', cautious: 'Avanço cauteloso', offensive: 'Ofensiva', breakthrough: 'Ruptura', reserve: 'Reserva', withdraw: 'Retirada organizada' };
+const orderHints: Record<FrontOrder, string> = {
+  defend: 'Menos perdas e maior resistência, mas pouco avanço.',
+  cautious: 'Preserva organização e logística com avanço limitado.',
+  offensive: 'Mais pressão e avanço, com consumo e baixas maiores.',
+  breakthrough: 'Máxima concentração para romper a frente; alto custo e risco.',
+  reserve: 'Reduz exposição e conserva força para outra fase da campanha.',
+  withdraw: 'Cede terreno para preservar tropas e reorganizar a linha.',
+};
 
 function SideList({ ids, names }: { ids: string[]; names: Record<string, string> }) {
   return <div className="war-side-list">{ids.map((id) => <span key={id}>{names[id] ?? id}</span>)}</div>;
@@ -48,7 +59,6 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
   const [assignmentDraft, setAssignmentDraft] = useState<Record<string, string>>({});
   const names = useMemo(() => Object.fromEntries(entities.map((item) => [item.id, item.name])), [entities]);
   const wars = warsForEntity(warState, entityId);
-  const activeWars = wars.filter((war) => war.status === 'active');
   const mobilization = warState.mobilization[entityId] ?? 'none';
   const runtime = simulation.entities[entityId];
   const controlledLocations = Object.values(territorialControl.occupations).filter((item) => item.controllerId === entityId && item.ownerId !== entityId).length;
@@ -77,7 +87,7 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
       <select value={targetId} onChange={(event) => setTargetId(event.target.value)}>{targets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
       <select value={goal} onChange={(event) => setGoal(event.target.value as WarGoal)}>{Object.entries(goalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <button className="declare-war" disabled={!targetId} onClick={() => targetId && onDeclareWar(targetId, goal)}>Declarar guerra</button>
-      <p>Prioridades operacionais redistribuem automaticamente forças não designadas. Uma formação designada manualmente fica vinculada à frente escolhida até você liberá-la.</p>
+      <p>Prioridade decide onde concentrar recursos. Ordem operacional decide como a frente luta: cautela, defesa, ofensiva, ruptura, reserva ou retirada.</p>
     </div>
     <div className="war-list">
       <div className="context-kicker">Conflitos da entidade</div>
@@ -91,20 +101,25 @@ export function WarConsole({ entityId, entities, simulation, warState, armyState
           {war.fronts.map((front) => {
             const occupation = front.locationId ? territorialControl.occupations[front.locationId] : undefined;
             const battle = territorialControl.battles.find((item) => item.warId === war.id && item.frontId === front.id);
-            const priority = side === 'attacker' ? front.attackerPriority : front.defenderPriority;
-            const assignments = side === 'attacker' ? front.attackerAssignments : front.defenderAssignments;
+            const priority = side === 'attacker' ? front.attackerPriority : side === 'defender' ? front.defenderPriority : 'normal';
+            const operation = side === 'attacker' ? front.attackerOrder : side === 'defender' ? front.defenderOrder : 'cautious';
+            const assignments = side === 'attacker' ? front.attackerAssignments : side === 'defender' ? front.defenderAssignments : [];
             const assignedUnits = ownUnits.filter((unit) => assignments.includes(unit.id));
             const draftKey = `${war.id}:${front.id}`;
             return <div className="front-row" key={front.id}>
               <div><strong>{front.name}</strong><span>Intensidade {front.intensity.toFixed(0)}%</span></div>
               <div className="front-subline"><span>{terrainLabels[front.terrain ?? ''] ?? 'Terreno não mapeado'}</span><span>{front.operationalData ? 'Dados operacionais ativos' : 'Estimativa agregada'}</span></div>
-              {side && war.status === 'active' && <div className="front-command-grid">
-                <label><span>Prioridade</span><select value={priority ?? 'normal'} onChange={(event) => onWarStateChange(setFrontPriority(warState, war.id, front.id, side, event.target.value as FrontPriority))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                <label><span>Designar formação</span><div className="front-assignment-row"><select value={assignmentDraft[draftKey] ?? ''} onChange={(event) => setAssignmentDraft((current) => ({ ...current, [draftKey]: event.target.value }))}><option value="">Selecionar…</option>{ownUnits.map((unit) => <option value={unit.id} key={unit.id}>{unit.name}</option>)}</select><button disabled={!assignmentDraft[draftKey]} onClick={() => assignmentDraft[draftKey] && onWarStateChange(assignUnitToFront(warState, war.id, front.id, side, assignmentDraft[draftKey]))}>Fixar</button></div></label>
-              </div>}
+              {side && war.status === 'active' && <>
+                <div className="front-command-grid">
+                  <label><span>Prioridade</span><select value={priority} onChange={(event) => onWarStateChange(setFrontPriority(warState, war.id, front.id, side, event.target.value as FrontPriority))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label><span>Ordem operacional</span><select value={operation} onChange={(event) => onWarStateChange(setFrontOrder(warState, war.id, front.id, side, event.target.value as FrontOrder))}>{Object.entries(orderLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label className="assignment-control"><span>Designar formação</span><div className="front-assignment-row"><select value={assignmentDraft[draftKey] ?? ''} onChange={(event) => setAssignmentDraft((current) => ({ ...current, [draftKey]: event.target.value }))}><option value="">Selecionar…</option>{ownUnits.map((unit) => <option value={unit.id} key={unit.id}>{unit.name}</option>)}</select><button disabled={!assignmentDraft[draftKey]} onClick={() => assignmentDraft[draftKey] && onWarStateChange(assignUnitToFront(warState, war.id, front.id, side, assignmentDraft[draftKey]))}>Fixar</button></div></label>
+                </div>
+                <div className={`front-order-hint order-${operation}`}><b>{orderLabels[operation]}</b><span>{orderHints[operation]}</span></div>
+              </>}
               {assignedUnits.length > 0 && <div className="front-assigned-units">{assignedUnits.map((unit) => <button key={unit.id} title="Liberar para redistribuição automática" onClick={() => onWarStateChange(clearUnitFrontAssignment(warState, war.id, unit.id))}>{unit.name} ×</button>)}</div>}
               <div className="front-track"><i style={{ width: `${front.progress}%` }}/></div>
-              <div className="front-power-grid"><div><span>Atacantes • {priorityLabels[front.attackerPriority]}</span><b>{front.attackerPower.toFixed(1)}</b><small>{front.attackerFormations} formações • logística {front.attackerLogistics.toFixed(0)}</small></div><div><span>Defensores • {priorityLabels[front.defenderPriority]}</span><b>{front.defenderPower.toFixed(1)}</b><small>{front.defenderFormations} formações • logística {front.defenderLogistics.toFixed(0)}</small></div></div>
+              <div className="front-power-grid"><div><span>Atacantes • {priorityLabels[front.attackerPriority]}</span><b>{front.attackerPower.toFixed(1)}</b><small>{front.attackerFormations} formações • {orderLabels[front.attackerOrder]} • logística {front.attackerLogistics.toFixed(0)}</small></div><div><span>Defensores • {priorityLabels[front.defenderPriority]}</span><b>{front.defenderPower.toFixed(1)}</b><small>{front.defenderFormations} formações • {orderLabels[front.defenderOrder]} • logística {front.defenderLogistics.toFixed(0)}</small></div></div>
               {occupation && <div className={`occupation-card ${occupation.contested ? 'contested' : occupation.controllerId !== occupation.ownerId ? 'occupied' : ''}`}><div><span>Ocupação da location</span><b>{occupation.progress.toFixed(0)}%</b></div><i><em style={{ width: `${occupation.progress}%` }}/></i><small>Controle: {names[occupation.controllerId] ?? occupation.controllerId} • soberania: {names[occupation.ownerId] ?? occupation.ownerId}</small></div>}
               {battle && <div className="battle-result"><span>Último ciclo de batalha</span><b>{outcomeLabels[battle.outcome]}</b><small>poder {battle.attackerPower.toFixed(1)} × {battle.defenderPower.toFixed(1)} • intensidade {battle.intensity.toFixed(0)}%</small></div>}
             </div>;
