@@ -1,6 +1,11 @@
 import { locationsForEntity, locationsForYear, type ResolvedLocation } from '../data/territories';
 import type { ArmyState, ArmyUnit } from './army';
 import type { GameDate, SimulationState } from './simulation';
+import {
+  createInitialTerritorialControlState,
+  simulateTerritorialControl,
+  type TerritorialControlState,
+} from './territorialControl';
 
 export type MobilizationLevel = 'none' | 'partial' | 'general';
 export type WarGoal = 'territory' | 'reparations' | 'regime' | 'independence' | 'defense';
@@ -53,7 +58,10 @@ export type WarActionResult = {
   message: string;
 };
 
-type ArmyGlobal = typeof globalThis & { __WORLD_STATE_ARMY_STATE__?: ArmyState };
+type ArmyGlobal = typeof globalThis & {
+  __WORLD_STATE_ARMY_STATE__?: ArmyState;
+  __WORLD_STATE_TERRITORIAL_CONTROL__?: TerritorialControlState;
+};
 
 type CoalitionPower = {
   power: number;
@@ -125,46 +133,27 @@ function distanceMultiplier(distance: number) {
 function terrainMultiplier(terrain: FrontState['terrain'], side: 'attacker' | 'defender') {
   if (!terrain) return 1;
   const attacker: Record<NonNullable<FrontState['terrain']>, number> = {
-    plains: 1.04,
-    hills: 0.91,
-    mountains: 0.78,
-    coastal: 0.95,
-    forest: 0.88,
-    desert: 0.92,
-    mixed: 0.97,
+    plains: 1.04, hills: 0.91, mountains: 0.78, coastal: 0.95, forest: 0.88, desert: 0.92, mixed: 0.97,
   };
   const defender: Record<NonNullable<FrontState['terrain']>, number> = {
-    plains: 1,
-    hills: 1.08,
-    mountains: 1.18,
-    coastal: 1.04,
-    forest: 1.1,
-    desert: 0.98,
-    mixed: 1.05,
+    plains: 1, hills: 1.08, mountains: 1.18, coastal: 1.04, forest: 1.1, desert: 0.98, mixed: 1.05,
   };
   return side === 'attacker' ? attacker[terrain] : defender[terrain];
 }
 
 function unitCombatPower(unit: ArmyUnit, frontLocation: ResolvedLocation | undefined, locations: Map<string, ResolvedLocation>, side: 'attacker' | 'defender') {
   const currentLocation = locations.get(unit.locationId);
-  const distance = distanceKm(currentLocation, frontLocation);
-  const distanceFactor = distanceMultiplier(distance);
-  const readiness = (
-    unit.strength * 0.22 +
-    unit.morale * 0.17 +
-    unit.organization * 0.2 +
-    unit.supply * 0.18 +
-    unit.equipment * 0.23
-  ) / 100;
+  const distanceFactor = distanceMultiplier(distanceKm(currentLocation, frontLocation));
+  const readiness = (unit.strength * 0.22 + unit.morale * 0.17 + unit.organization * 0.2 + unit.supply * 0.18 + unit.equipment * 0.23) / 100;
   const personnelFactor = clamp(unit.personnel / 12000, 0.35, 2.4);
-  const commanderSkill = clamp(unit.commander.skill, 0, 10);
-  const commanderLogistics = clamp(unit.commander.logistics, 0, 10);
-  const commanderInitiative = clamp(unit.commander.initiative, 0, 10);
-  const commanderFactor = 0.88 + commanderSkill * 0.025 + commanderLogistics * 0.012 + commanderInitiative * 0.01;
+  const commanderSkill = clamp(unit.commander.skill / 100, 0, 1);
+  const commanderLogistics = clamp(unit.commander.logistics / 100, 0, 1);
+  const commanderInitiative = clamp(unit.commander.initiative / 100, 0, 1);
+  const commanderFactor = 0.88 + commanderSkill * 0.25 + commanderLogistics * 0.12 + commanderInitiative * 0.1;
   const orderFactor = unit.order === 'prepare' ? 1.08 : unit.order === 'move' ? 0.76 : 1;
   const terrain = terrainMultiplier(frontLocation?.terrain, side);
   const power = 20 * personnelFactor * readiness * commanderFactor * orderFactor * distanceFactor * terrain;
-  const logistics = clamp((unit.supply * 0.48 + unit.organization * 0.22 + unit.equipment * 0.2 + commanderLogistics * 10 * 0.1) * distanceFactor, 0, 100);
+  const logistics = clamp((unit.supply * 0.48 + unit.organization * 0.22 + unit.equipment * 0.2 + unit.commander.logistics * 0.1) * distanceFactor, 0, 100);
   return { power, logistics };
 }
 
@@ -179,13 +168,7 @@ function aggregateNationalPower(simulation: SimulationState, warState: WarState,
   };
 }
 
-function coalitionPower(
-  simulation: SimulationState,
-  warState: WarState,
-  members: string[],
-  front: FrontState,
-  side: 'attacker' | 'defender',
-): CoalitionPower {
+function coalitionPower(simulation: SimulationState, warState: WarState, members: string[], front: FrontState, side: 'attacker' | 'defender'): CoalitionPower {
   if (!members.length) return { power: 0, formations: 0, logistics: 0, operationalData: false };
   const armyState = operationalArmyState();
   const locations = locationMap(simulation.date.year);
@@ -216,21 +199,10 @@ function coalitionPower(
     }
   }
 
-  return {
-    power,
-    formations,
-    logistics: logisticsSources ? logisticsTotal / logisticsSources : 0,
-    operationalData,
-  };
+  return { power, formations, logistics: logisticsSources ? logisticsTotal / logisticsSources : 0, operationalData };
 }
 
-export function declareWar(
-  state: WarState,
-  simulation: SimulationState,
-  attackerId: string,
-  defenderId: string,
-  goal: WarGoal,
-): WarActionResult {
+export function declareWar(state: WarState, simulation: SimulationState, attackerId: string, defenderId: string, goal: WarGoal): WarActionResult {
   if (!attackerId || !defenderId || attackerId === defenderId) return { state, error: 'invalid-target', message: 'Selecione uma entidade estrangeira válida.' };
   if (!simulation.entities[attackerId] || !simulation.entities[defenderId]) return { state, error: 'missing-runtime', message: 'Uma das entidades ainda não possui perfil de simulação ativo.' };
   if (pairActive(state, attackerId, defenderId)) return { state, error: 'already-at-war', message: 'Essas entidades já estão em guerra.' };
@@ -290,11 +262,18 @@ function dailyNoise(war: War, simulation: SimulationState) {
   return ((hash >>> 0) % 1000) / 1000 - 0.5;
 }
 
+function publishTerritorialControl(state: WarState, simulation: SimulationState, days: number) {
+  const root = globalThis as ArmyGlobal;
+  const current = root.__WORLD_STATE_TERRITORIAL_CONTROL__ ?? createInitialTerritorialControlState();
+  const next = simulateTerritorialControl(current, state, simulation.date.year, simulation.date, days);
+  root.__WORLD_STATE_TERRITORIAL_CONTROL__ = next;
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('world-state-territorial-control', { detail: next }));
+}
+
 export function simulateWarDays(state: WarState, simulation: SimulationState, days: number): WarState {
   if (days <= 0 || !state.wars.some((war) => war.status === 'active')) return state;
   const wars = state.wars.map((war) => {
     if (war.status !== 'active') return war;
-
     const primaryFront = war.fronts[0];
     const attackers = coalitionPower(simulation, state, war.attackers, primaryFront, 'attacker');
     const defenders = coalitionPower(simulation, state, war.defenders, primaryFront, 'defender');
@@ -345,7 +324,9 @@ export function simulateWarDays(state: WarState, simulation: SimulationState, da
       fronts,
     };
   });
-  return { ...state, wars };
+  const next = { ...state, wars };
+  publishTerritorialControl(next, simulation, days);
+  return next;
 }
 
 export function warsForEntity(state: WarState, entityId: string) {
