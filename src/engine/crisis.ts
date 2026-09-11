@@ -71,7 +71,7 @@ export function resetCrises() {
 }
 
 export function activeCrisisBetween(a: string, b: string) {
-  return rootState().find((crisis) => crisis.status === 'active' && ((crisis.initiatorId === a && crisis.targetId === b) || (crisis.initiatorId === b && crisis.targetId === a)));
+  return rootState().find((crisis) => crisis.status !== 'resolved' && ((crisis.initiatorId === a && crisis.targetId === b) || (crisis.initiatorId === b && crisis.targetId === a)));
 }
 
 export function crisesForEntity(entityId: string) {
