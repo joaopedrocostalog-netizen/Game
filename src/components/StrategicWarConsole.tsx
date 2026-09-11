@@ -9,6 +9,7 @@ import { CrisisConferencePanel } from './CrisisConferencePanel';
 import { CoalitionInterestsPanel } from './CoalitionInterestsPanel';
 import { CoalitionPoliticsPanel } from './CoalitionPoliticsPanel';
 import { AllianceCommandPanel } from './AllianceCommandPanel';
+import { PostWarConferencePanel } from './PostWarConferencePanel';
 import { WarConsole } from './WarConsole';
 
 type Props = {
@@ -33,6 +34,7 @@ export function StrategicWarConsole(props: Props) {
     <CoalitionInterestsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl}/>
     <CoalitionPoliticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onWarStateChange={props.onWarStateChange}/>
     <AllianceCommandPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onWarStateChange={props.onWarStateChange}/>
+    <PostWarConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl}/>
     <WarConsole
       entityId={props.entityId}
       entities={props.entities}
