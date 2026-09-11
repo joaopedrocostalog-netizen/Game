@@ -1,5 +1,6 @@
 import type { ArmyState } from './army';
 import type { SimulationState, WorldEvent } from './simulation';
+import { strategicResourceIndustryModifiers } from './strategicResources';
 import type { WarState } from './war';
 
 export type MilitaryIndustrySector = 'armaments' | 'supply' | 'naval';
@@ -182,11 +183,6 @@ export function startMilitaryIndustryExpansion(entityId: string, sector: Militar
   return { simulation: nextSimulation, project };
 }
 
-function tradeImportSupport(entityId: string, simulation: SimulationState) {
-  const tradeTreaties = simulation.treaties.filter((treaty) => treaty.active && treaty.type === 'trade' && treaty.parties.includes(entityId)).length;
-  return clamp(tradeTreaties * 8, 0, 28);
-}
-
 export function processMilitaryIndustry(simulation: SimulationState, armyState: ArmyState, warState: WarState) {
   const state = rootState();
   let profiles = { ...state.profiles };
@@ -204,24 +200,35 @@ export function processMilitaryIndustry(simulation: SimulationState, armyState: 
     }
     const units = nextArmy.units.filter((unit) => unit.entityId === entityId);
     const atWar = warState.wars.some((war) => war.status === 'active' && (war.attackers.includes(entityId) || war.defenders.includes(entityId)));
-    const importSupport = tradeImportSupport(entityId, simulation) * (profile.importDependence / 100);
-    const armamentsProduction = days * (profile.armamentsCapacity + importSupport) / 900;
-    const supplyProduction = days * (profile.supplyCapacity + importSupport * .8) / 760;
+    const resources = strategicResourceIndustryModifiers(entityId, simulation);
+    const armamentsProduction = days * profile.armamentsCapacity * resources.armaments / 900;
+    const supplyProduction = days * profile.supplyCapacity * resources.supply / 760;
     const armamentsConsumption = atWar ? days * units.length * .035 : days * units.length * .008;
     const supplyConsumption = atWar ? days * units.length * .052 : days * units.length * .012;
     let armamentsStockpile = clamp(profile.armamentsStockpile + armamentsProduction - armamentsConsumption);
     let supplyStockpile = clamp(profile.supplyStockpile + supplyProduction - supplyConsumption);
 
     const replacementEfficiency = clamp(
-      profile.replacementEfficiency * .72 + profile.armamentsCapacity * .16 + profile.supplyCapacity * .12 + importSupport * .25,
+      profile.replacementEfficiency * .62
+      + profile.armamentsCapacity * .12
+      + profile.supplyCapacity * .1
+      + resources.overallSecurity * .16,
     );
 
     if (units.length) {
       nextArmy.units = nextArmy.units.map((unit) => {
         if (unit.entityId !== entityId) return unit;
-        if (atWar) {
-          if (armamentsStockpile < 18) return { ...unit, equipment: clamp(unit.equipment - days * .018), organization: clamp(unit.organization - days * .007) };
-          if (supplyStockpile < 18) return { ...unit, supply: clamp(unit.supply - days * .026), morale: clamp(unit.morale - days * .006) };
+        const strategicShortage = resources.overallSecurity < 28;
+        if (atWar && (armamentsStockpile < 18 || strategicShortage)) {
+          const shortageScale = strategicShortage ? 1.45 : 1;
+          return {
+            ...unit,
+            equipment: clamp(unit.equipment - days * .018 * shortageScale),
+            organization: clamp(unit.organization - days * .007 * shortageScale),
+          };
+        }
+        if (atWar && supplyStockpile < 18) {
+          return { ...unit, supply: clamp(unit.supply - days * .026), morale: clamp(unit.morale - days * .006) };
         }
         const equipmentNeed = Math.max(0, 100 - unit.equipment);
         const supplyNeed = Math.max(0, 100 - unit.supply);
@@ -272,9 +279,11 @@ export function processMilitaryIndustry(simulation: SimulationState, armyState: 
 
 export function militaryIndustryPressure(entityId: string, simulation: SimulationState) {
   const profile = militaryIndustryFor(entityId, simulation);
+  const resourceSecurity = strategicResourceIndustryModifiers(entityId, simulation).overallSecurity;
   const stock = (profile.armamentsStockpile + profile.supplyStockpile) / 2;
-  if (stock < 18) return 'critical';
-  if (stock < 35) return 'strained';
-  if (stock < 62) return 'adequate';
+  const combined = stock * .68 + resourceSecurity * .32;
+  if (combined < 18) return 'critical';
+  if (combined < 35) return 'strained';
+  if (combined < 62) return 'adequate';
   return 'strong';
 }
