@@ -1,5 +1,6 @@
 import { militaryIndustryFor } from './militaryIndustry';
 import { airIndustrialSupport } from './airIndustry';
+import { airDoctrineMissionModifier, airDoctrineSupport } from './airDoctrine';
 import { airCampaignState, type AirCampaignState, type AirFormation } from './airCampaign';
 import type { SimulationState } from './simulation';
 import type { WarState } from './war';
@@ -68,17 +69,28 @@ function deterministic(seed: string) {
   return .9 + (Math.abs(h >>> 0) % 21) / 100;
 }
 function combatFactor(formation: AirFormation, simulation: SimulationState) {
-  const mission = formation.mission === 'air-superiority' ? 1.18 : formation.mission === 'reconnaissance' ? .78 : formation.mission === 'ground-support' ? .92 : formation.mission === 'interdiction' ? .96 : formation.mission === 'maritime-patrol' ? .82 : .35;
+  const mission = formation.mission === 'air-superiority' ? 1.18
+    : formation.mission === 'reconnaissance' ? .78
+      : formation.mission === 'ground-support' ? .92
+        : formation.mission === 'interdiction' ? .96
+          : formation.mission === 'maritime-patrol' ? .82
+            : formation.mission === 'air-transport' ? .28
+              : .35;
   const specialized = airIndustrialSupport(formation.entityId, simulation);
+  const doctrine = airDoctrineSupport(formation.entityId, simulation);
   const modernization = .78 + specialized.effectiveness / 420 - specialized.obsolescence / 500;
   const pilotQuality = .9 + specialized.pilotTraining / 600;
-  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality;
+  const doctrinalFit = airDoctrineMissionModifier(formation.entityId, formation.mission, simulation);
+  const coordination = .9 + doctrine.combatCoordination / 650;
+  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality * doctrinalFit * coordination;
 }
 function airDefenseFor(entityId: string, simulation: SimulationState) {
   const runtime = simulation.entities[entityId];
   if (!runtime || simulation.date.year < 1914) return simulation.date.year < 1903 ? 2 : 8;
   const era = simulation.date.year < 1945 ? .72 : simulation.date.year < 1990 ? .9 : 1;
-  return clamp((runtime.technology * .48 + runtime.militaryReadiness * .32 + runtime.treasuryIndex * .2) * era);
+  const doctrine = airDoctrineSupport(entityId, simulation);
+  const doctrineBonus = doctrine.school === 'air-defense' ? doctrine.mastery * .12 : doctrine.school === 'air-superiority' ? doctrine.mastery * .05 : 0;
+  return clamp((runtime.technology * .48 + runtime.militaryReadiness * .32 + runtime.treasuryIndex * .2 + doctrineBonus) * era);
 }
 function baseCondition(damage: number): AirBaseCondition {
   if (damage >= 76) return 'critical';
@@ -96,19 +108,21 @@ function ensureBases(formations: AirFormation[], simulation: SimulationState, ex
   return bases;
 }
 function activeFormations(formations: AirFormation[], ids: Set<string>) {
-  return formations.filter((item) => ids.has(item.entityId) && item.mission !== 'reserve' && item.strength > 3 && item.readiness > 8);
+  return formations.filter((item) => ids.has(item.entityId) && item.mission !== 'reserve' && item.mission !== 'air-transport' && item.strength > 3 && item.readiness > 8);
 }
-function distributeLosses(formations: AirFormation[], participants: AirFormation[], losses: number, defensePressure: number) {
+function distributeLosses(formations: AirFormation[], participants: AirFormation[], losses: number, defensePressure: number, simulation: SimulationState) {
   if (!participants.length || losses <= 0) return formations;
   const total = Math.max(1, participants.reduce((sum, item) => sum + item.strength, 0));
   return formations.map((formation) => {
     const participant = participants.find((item) => item.id === formation.id);
     if (!participant) return formation;
     const share = losses * participant.strength / total;
+    const doctrine = airDoctrineSupport(formation.entityId, simulation);
+    const cohesion = 1 - Math.min(.18, doctrine.mastery / 700 + doctrine.flexibility / 1200);
     return {
       ...formation,
       strength: clamp(formation.strength - share),
-      readiness: clamp(formation.readiness - share * .85 - defensePressure * .025),
+      readiness: clamp(formation.readiness - (share * .85 + defensePressure * .025) * cohesion),
       supply: clamp(formation.supply - share * .35),
       experience: clamp(formation.experience + Math.max(.3, share * .08)),
     };
@@ -141,8 +155,8 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
     const shareA = attackPower / total;
     const attackerLosses = clamp((.7 + (1 - shareA) * 3.3 + attackerDefense * .012) * deterministic(`${war.id}:loss:a:${simulation.elapsedDays}`), .4, 8);
     const defenderLosses = clamp((.7 + shareA * 3.3 + defenderDefense * .012) * deterministic(`${war.id}:loss:d:${simulation.elapsedDays}`), .4, 8);
-    formations = distributeLosses(formations, attackers, attackerLosses, attackerDefense);
-    formations = distributeLosses(formations, defenders, defenderLosses, defenderDefense);
+    formations = distributeLosses(formations, attackers, attackerLosses, attackerDefense, simulation);
+    formations = distributeLosses(formations, defenders, defenderLosses, defenderDefense, simulation);
 
     const gap = Math.abs(attackPower - defendPower) / Math.max(attackPower, defendPower, 1);
     const outcome: AirEngagementOutcome = gap > .42 ? 'decisive' : gap > .18 ? 'advantage' : 'inconclusive';
@@ -179,16 +193,17 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
   for (const formation of formations) {
     const industry = militaryIndustryFor(formation.entityId, simulation);
     const specialized = airIndustrialSupport(formation.entityId, simulation);
+    const doctrine = airDoctrineSupport(formation.entityId, simulation);
     const key = `${formation.entityId}:${formation.baseLocationId}`;
     const base = bases[key];
     const damagePenalty = base ? 1 - base.damage / 135 : 1;
     const replacement = simulation.date.year < 1903
       ? .01
-      : (industry.armamentsCapacity * .00035 + industry.replacementEfficiency * .00028 + specialized.production * .00062 + specialized.maintenance * .00034) * damagePenalty * (.72 + specialized.modernization / 260);
+      : (industry.armamentsCapacity * .00035 + industry.replacementEfficiency * .00028 + specialized.production * .00062 + specialized.maintenance * .00034) * damagePenalty * (.72 + specialized.modernization / 260) * (.9 + doctrine.flexibility / 900);
     const repair = simulation.date.year < 1903 ? .008 : (industry.supplyCapacity * .00035 + specialized.maintenance * .00055);
     formation.strength = clamp(formation.strength + replacement);
-    formation.readiness = clamp(formation.readiness + specialized.maintenance * .00012);
-    formation.experience = clamp(formation.experience + specialized.pilotTraining * .00005);
+    formation.readiness = clamp(formation.readiness + specialized.maintenance * .00012 + doctrine.mastery * .000025);
+    formation.experience = clamp(formation.experience + specialized.pilotTraining * .00005 + doctrine.mastery * .000018);
     if (base && base.damage > 0) {
       const nextDamage = clamp(base.damage - repair);
       bases[key] = { ...base, damage: nextDamage, condition: baseCondition(nextDamage) };
