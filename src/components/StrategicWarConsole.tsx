@@ -26,6 +26,7 @@ import { StrategicResourcesPanel } from './StrategicResourcesPanel';
 import { TradePressurePanel } from './TradePressurePanel';
 import { NavalForcesPanel } from './NavalForcesPanel';
 import { NavalWarfarePanel } from './NavalWarfarePanel';
+import { AmphibiousOperationsPanel } from './AmphibiousOperationsPanel';
 import { MilitaryIndustryPanel } from './MilitaryIndustryPanel';
 import { WarConsole } from './WarConsole';
 
@@ -60,6 +61,7 @@ export function StrategicWarConsole(props: Props) {
     <TradePressurePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <NavalForcesPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <NavalWarfarePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
+    <AmphibiousOperationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <MilitaryIndustryPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange}/>
     <OperationalCampaignPlansPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
