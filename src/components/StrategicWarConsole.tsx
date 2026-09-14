@@ -30,6 +30,7 @@ import { AmphibiousOperationsPanel } from './AmphibiousOperationsPanel';
 import { BeachheadLogisticsPanel } from './BeachheadLogisticsPanel';
 import { AirCampaignPanel } from './AirCampaignPanel';
 import { AirIndustryPanel } from './AirIndustryPanel';
+import { AirDoctrinePanel } from './AirDoctrinePanel';
 import { AirWarfarePanel } from './AirWarfarePanel';
 import { MilitaryIndustryPanel } from './MilitaryIndustryPanel';
 import { WarConsole } from './WarConsole';
@@ -67,6 +68,7 @@ export function StrategicWarConsole(props: Props) {
     <NavalWarfarePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <AirCampaignPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onArmyStateChange={props.onArmyStateChange}/>
     <AirIndustryPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
+    <AirDoctrinePanel entityId={props.entityId} simulation={props.simulation}/>
     <AirWarfarePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <AmphibiousOperationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <BeachheadLogisticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} territorialControl={props.territorialControl} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
