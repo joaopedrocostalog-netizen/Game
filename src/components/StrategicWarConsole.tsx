@@ -23,6 +23,7 @@ import { AdaptiveEnemyCommandPanel } from './AdaptiveEnemyCommandPanel';
 import { MilitaryLegacyPanel } from './MilitaryLegacyPanel';
 import { PeacetimeMilitaryReformsPanel } from './PeacetimeMilitaryReformsPanel';
 import { StrategicResourcesPanel } from './StrategicResourcesPanel';
+import { TradePressurePanel } from './TradePressurePanel';
 import { MilitaryIndustryPanel } from './MilitaryIndustryPanel';
 import { WarConsole } from './WarConsole';
 
@@ -54,6 +55,7 @@ export function StrategicWarConsole(props: Props) {
     <MilitaryLegacyPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} territorialControl={props.territorialControl} onArmyStateChange={props.onArmyStateChange}/>
     <PeacetimeMilitaryReformsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange}/>
     <StrategicResourcesPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
+    <TradePressurePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <MilitaryIndustryPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange}/>
     <OperationalCampaignPlansPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <CasusBelliPlanner entity={entity} entities={props.entities} simulation={props.simulation} onMobilize={props.onMobilize} onDeclareWar={props.onDeclareWar}/>
