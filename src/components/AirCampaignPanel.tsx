@@ -24,7 +24,11 @@ type Props = {
   onArmyStateChange: (state: ArmyState) => void;
 };
 
-const missions: AirMission[] = ['reserve', 'air-superiority', 'reconnaissance', 'ground-support', 'interdiction', 'maritime-patrol'];
+const baseMissions: AirMission[] = ['reserve', 'air-superiority', 'reconnaissance', 'ground-support', 'interdiction', 'maritime-patrol'];
+
+function missionsForYear(year: number): AirMission[] {
+  return year >= 1930 ? [...baseMissions, 'air-transport'] : baseMissions;
+}
 
 function band(value: number) {
   if (value < 22) return 'MUITO BAIXA';
@@ -44,6 +48,7 @@ export function AirCampaignPanel({ entityId, entities, simulation, warState, arm
   const [revision, setRevision] = useState(0);
   const [message, setMessage] = useState('');
   const names = useMemo(() => Object.fromEntries(entities.map((entity) => [entity.id, entity.name])), [entities]);
+  const missions = missionsForYear(simulation.date.year);
 
   useEffect(() => {
     const refresh = () => setRevision((value) => value + 1);
@@ -114,6 +119,6 @@ export function AirCampaignPanel({ entityId, entities, simulation, warState, arm
     </div>}
 
     {message && <div className="air-campaign-message">{message}</div>}
-    <small className="air-campaign-note">O poder aéreo é agregado por formações estratégicas, não por contagem histórica exata de aeronaves. Superioridade aérea influencia organização e abastecimento; reconhecimento melhora consciência situacional; apoio terrestre e interdição representam pressão operacional; patrulha marítima coopera com forças navais.</small>
+    <small className="air-campaign-note">O poder aéreo é agregado por formações estratégicas, não por contagem histórica exata de aeronaves. Superioridade aérea influencia organização e abastecimento; reconhecimento melhora consciência situacional; apoio terrestre e interdição representam pressão operacional; patrulha marítima coopera com forças navais; transporte aéreo sustenta formações terrestres quando a época e a capacidade permitem.</small>
   </section>;
 }
