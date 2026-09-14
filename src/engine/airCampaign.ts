@@ -1,10 +1,11 @@
 import { locationsForEntity, locationsForYear, type ResolvedLocation } from '../data/territories';
 import type { ArmyState } from './army';
+import { airDoctrineMissionModifier } from './airDoctrine';
 import type { NavalState } from './navalForces';
 import type { SimulationState } from './simulation';
 import type { FrontState, WarState } from './war';
 
-export type AirMission = 'reserve' | 'air-superiority' | 'reconnaissance' | 'ground-support' | 'interdiction' | 'maritime-patrol';
+export type AirMission = 'reserve' | 'air-superiority' | 'reconnaissance' | 'ground-support' | 'interdiction' | 'maritime-patrol' | 'air-transport';
 export type AirFormation = {
   id: string;
   entityId: string;
@@ -62,6 +63,7 @@ export function airMissionLabel(mission: AirMission, year: number) {
   if (mission === 'reconnaissance') return year < 1903 ? 'Observação por balões' : 'Reconhecimento aéreo';
   if (mission === 'ground-support') return year < 1914 ? 'Apoio de observação ao exército' : 'Apoio terrestre';
   if (mission === 'interdiction') return year < 1914 ? 'Observação das linhas inimigas' : 'Interdição operacional';
+  if (mission === 'air-transport') return year < 1930 ? 'Transporte aéreo experimental' : year < 1945 ? 'Transporte aéreo operacional' : 'Mobilidade e transporte aéreo';
   return year < 1914 ? 'Observação costeira' : 'Patrulha marítima';
 }
 
@@ -112,23 +114,25 @@ function activeWarEnemies(entityId: string, warState: WarState) {
   }
   return set;
 }
-function missionFactor(mission: AirMission) {
-  if (mission === 'air-superiority') return 1.18;
-  if (mission === 'reconnaissance') return .72;
-  if (mission === 'ground-support') return .88;
-  if (mission === 'interdiction') return .82;
-  if (mission === 'maritime-patrol') return .74;
-  return .28;
+function missionFactor(formation: AirFormation, simulation: SimulationState) {
+  const mission = formation.mission === 'air-superiority' ? 1.18
+    : formation.mission === 'reconnaissance' ? .72
+      : formation.mission === 'ground-support' ? .88
+        : formation.mission === 'interdiction' ? .82
+          : formation.mission === 'maritime-patrol' ? .74
+            : formation.mission === 'air-transport' ? .22
+              : .28;
+  return mission * airDoctrineMissionModifier(formation.entityId, formation.mission, simulation);
 }
-function formationPower(formation: AirFormation) {
-  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.82 + formation.experience / 500) * missionFactor(formation.mission);
+function formationPower(formation: AirFormation, simulation: SimulationState) {
+  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.82 + formation.experience / 500) * missionFactor(formation, simulation);
 }
-function frontControl(warId: string, front: FrontState, warState: WarState, formations: AirFormation[]): AirTheaterControl {
+function frontControl(warId: string, front: FrontState, warState: WarState, formations: AirFormation[], simulation: SimulationState): AirTheaterControl {
   const war = warState.wars.find((item) => item.id === warId)!;
   const attackers = new Set(war.attackers);
   const defenders = new Set(war.defenders);
-  const attackerScore = formations.filter((item) => attackers.has(item.entityId) && item.mission !== 'reserve').reduce((sum, item) => sum + formationPower(item), 0);
-  const defenderScore = formations.filter((item) => defenders.has(item.entityId) && item.mission !== 'reserve').reduce((sum, item) => sum + formationPower(item), 0);
+  const attackerScore = formations.filter((item) => attackers.has(item.entityId) && item.mission !== 'reserve' && item.mission !== 'air-transport').reduce((sum, item) => sum + formationPower(item, simulation), 0);
+  const defenderScore = formations.filter((item) => defenders.has(item.entityId) && item.mission !== 'reserve' && item.mission !== 'air-transport').reduce((sum, item) => sum + formationPower(item, simulation), 0);
   const total = attackerScore + defenderScore;
   const state: AirTheaterControl['state'] = total < 8 ? 'limited' : attackerScore > defenderScore * 1.35 ? 'attacker-dominant' : defenderScore > attackerScore * 1.35 ? 'defender-dominant' : 'contested';
   return { warId, frontId: front.id, attackerScore, defenderScore, state };
@@ -161,7 +165,7 @@ export function processAirCampaign(simulation: SimulationState, warState: WarSta
     if (active && enemies.size && readiness < 28 && days >= 20) strength -= .8;
     return { ...formation, readiness: clamp(readiness), supply: clamp(supply), strength: clamp(strength), experience: clamp(experience), lastProcessedElapsedDay: simulation.elapsedDays };
   });
-  const theaters = warState.wars.filter((war) => war.status === 'active').flatMap((war) => war.fronts.map((front) => frontControl(war.id, front, warState, formations)));
+  const theaters = warState.wars.filter((war) => war.status === 'active').flatMap((war) => war.fronts.map((front) => frontControl(war.id, front, warState, formations, simulation)));
 
   for (const theater of theaters) {
     const war = warState.wars.find((item) => item.id === theater.warId);
@@ -181,11 +185,27 @@ export function processAirCampaign(simulation: SimulationState, warState: WarSta
     };
   }
 
+  const transportSupport = new Map<string, number>();
+  for (const formation of formations.filter((item) => item.mission === 'air-transport' && simulation.date.year >= 1930)) {
+    const value = formation.strength * formation.readiness / 100 * formation.supply / 100 * airDoctrineMissionModifier(formation.entityId, formation.mission, simulation);
+    transportSupport.set(formation.entityId, (transportSupport.get(formation.entityId) ?? 0) + value);
+  }
+  if (transportSupport.size) {
+    nextArmy = {
+      ...nextArmy,
+      units: nextArmy.units.map((unit) => {
+        const support = transportSupport.get(unit.entityId) ?? 0;
+        if (!support || !activeWarEnemies(unit.entityId, warState).size) return unit;
+        return { ...unit, supply: clamp(unit.supply + Math.min(.28, support / 260)), organization: clamp(unit.organization + Math.min(.12, support / 600)) };
+      }),
+    };
+  }
+
   const root = globalThis as AirGlobal;
   const naval = root.__WORLD_STATE_NAVAL_FORCES__;
   if (naval && theaters.some((theater) => theater.state === 'attacker-dominant' || theater.state === 'defender-dominant')) {
     const patrolByEntity = new Map<string, number>();
-    for (const formation of formations.filter((item) => item.mission === 'maritime-patrol')) patrolByEntity.set(formation.entityId, (patrolByEntity.get(formation.entityId) ?? 0) + formationPower(formation));
+    for (const formation of formations.filter((item) => item.mission === 'maritime-patrol')) patrolByEntity.set(formation.entityId, (patrolByEntity.get(formation.entityId) ?? 0) + formationPower(formation, simulation));
     if (patrolByEntity.size) {
       root.__WORLD_STATE_NAVAL_FORCES__ = {
         ...naval,
