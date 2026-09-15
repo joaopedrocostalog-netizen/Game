@@ -160,6 +160,10 @@ function complianceStatus(record: TreatyComplianceRecord): TreatyComplianceStatu
   return 'compliant';
 }
 
+function diplomacyEvent(event: Omit<WorldEvent, 'category'>): WorldEvent {
+  return { ...event, category: 'diplomacy' };
+}
+
 export function guaranteeTreaty(entityId: string, treatyId: string) {
   const state = rootState();
   const record = state.records[treatyId];
@@ -208,7 +212,7 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
           const counterpart = partyId === settlement.leaderId ? settlement.opponentId : settlement.leaderId;
           revanchism[counterpart] = clamp((revanchism[counterpart] ?? 0) + days * .025);
           if (!already) {
-            events = [{ id: `treaty-dmz-${settlement.id}-${zone.locationId}-${partyId}-${simulation.elapsedDays}`, date: simulation.date, entityId: partyId, category: 'diplomacy', title: 'Violação de zona desmilitarizada', text: 'A presença de forças militares numa região restringida pelo tratado abriu uma disputa formal de cumprimento.' }, ...events].slice(0, 50);
+            events = [diplomacyEvent({ id: `treaty-dmz-${settlement.id}-${zone.locationId}-${partyId}-${simulation.elapsedDays}`, date: simulation.date, entityId: partyId, title: 'Violação de zona desmilitarizada', text: 'A presença de forças militares numa região restringida pelo tratado abriu uma disputa formal de cumprimento.' }), ...events].slice(0, 50);
             nextSimulation = mutateRelation(nextSimulation, settlement.leaderId, settlement.opponentId, -9, -12, 10, 'Violação de zona desmilitarizada no tratado de paz.');
           }
         } else if (activeViolation(record, violationId)) record = resolveViolation(record, violationId, simulation.elapsedDays);
@@ -227,7 +231,7 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
       if (payer.treasuryIndex <= installment + 4) {
         const already = !!activeViolation(record, violationId);
         record = upsertViolation(record, { id: violationId, treatyId: settlement.id, type: 'reparations-arrears', violatorId: schedule.payerId, severity: clamp(48 + Math.min(28, (simulation.elapsedDays - schedule.lastPaymentElapsedDay) / 12)), description: 'O pagamento periódico de reparações está em atraso por insuficiência fiscal ou recusa política.' }, simulation.elapsedDays);
-        if (!already) events = [{ id: `reparations-default-${settlement.id}-${schedule.clauseId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.payerId, category: 'diplomacy', title: 'Reparações entram em atraso', text: 'O cronograma de reparações do tratado não foi cumprido e a contraparte passou a considerar a situação uma violação.' }, ...events].slice(0, 50);
+        if (!already) events = [diplomacyEvent({ id: `reparations-default-${settlement.id}-${schedule.clauseId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.payerId, title: 'Reparações entram em atraso', text: 'O cronograma de reparações do tratado não foi cumprido e a contraparte passou a considerar a situação uma violação.' }), ...events].slice(0, 50);
         return schedule;
       }
       nextSimulation = { ...nextSimulation, entities: { ...nextSimulation.entities,
@@ -252,9 +256,9 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
       occupations[i] = { ...schedule, released: true };
       if (troopsRemain) {
         record = upsertViolation(record, { id: violationId, treatyId: settlement.id, type: 'occupation-overstay', violatorId: schedule.occupierId, locationId: schedule.locationId, severity: 72, description: 'O prazo da ocupação temporária terminou, mas forças do antigo ocupante permanecem na região.' }, simulation.elapsedDays);
-        events = [{ id: `occupation-overstay-${settlement.id}-${schedule.locationId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.occupierId, category: 'diplomacy', title: 'Prazo de ocupação expirou sob tensão', text: 'A administração territorial foi devolvida conforme o tratado, mas tropas estrangeiras permanecem na região e geram uma nova crise.' }, ...events].slice(0, 50);
+        events = [diplomacyEvent({ id: `occupation-overstay-${settlement.id}-${schedule.locationId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.occupierId, title: 'Prazo de ocupação expirou sob tensão', text: 'A administração territorial foi devolvida conforme o tratado, mas tropas estrangeiras permanecem na região e geram uma nova crise.' }), ...events].slice(0, 50);
       } else {
-        events = [{ id: `occupation-ended-${settlement.id}-${schedule.locationId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.sovereignId, category: 'diplomacy', title: 'Ocupação temporária encerrada', text: 'O prazo previsto no tratado terminou e o controle administrativo da região retornou ao soberano formal.' }, ...events].slice(0, 50);
+        events = [diplomacyEvent({ id: `occupation-ended-${settlement.id}-${schedule.locationId}-${simulation.elapsedDays}`, date: simulation.date, entityId: schedule.sovereignId, title: 'Ocupação temporária encerrada', text: 'O prazo previsto no tratado terminou e o controle administrativo da região retornou ao soberano formal.' }), ...events].slice(0, 50);
       }
     }
 
@@ -268,7 +272,7 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
       if (!record.guarantorIds.length && age < 60) continue;
       const crisis: TreatyEnforcementCrisis = { id: `treaty-crisis-${settlement.id}-${violation.violatorId}-${simulation.elapsedDays}`, treatyId: settlement.id, violatorId: violation.violatorId, claimantIds, severity: clamp(violation.severity + record.guarantorIds.length * 6 + Math.min(16, age / 15)), status: 'open', openedAtElapsedDay: simulation.elapsedDays, reason: violation.description };
       crises = [crisis, ...crises].slice(0, 20);
-      events = [{ id: `treaty-crisis-event-${crisis.id}`, date: simulation.date, entityId: violation.violatorId, category: 'diplomacy', title: 'Crise internacional de cumprimento do tratado', text: `Uma violação grave mobilizou ${claimantIds.length} parte(s) ou garantidor(es). A disputa pode alimentar novas exigências, isolamento diplomático ou um futuro casus belli.` }, ...events].slice(0, 50);
+      events = [diplomacyEvent({ id: `treaty-crisis-event-${crisis.id}`, date: simulation.date, entityId: violation.violatorId, title: 'Crise internacional de cumprimento do tratado', text: `Uma violação grave mobilizou ${claimantIds.length} parte(s) ou garantidor(es). A disputa pode alimentar novas exigências, isolamento diplomático ou um futuro casus belli.` }), ...events].slice(0, 50);
       for (const claimant of claimantIds) nextSimulation = mutateRelation(nextSimulation, claimant, violation.violatorId, -8, -10, 12, 'Crise provocada por violação de tratado de paz garantido.');
     }
 
