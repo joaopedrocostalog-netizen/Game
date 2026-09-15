@@ -6,7 +6,7 @@ import { pairKey, type SimulationState, type WorldEvent } from './simulation';
 import type { OccupationState, TerritorialControlState } from './territorialControl';
 import type { War, WarState } from './war';
 
-export type TerritorialPeaceTerm = 'annexation' | 'restitution' | 'autonomy' | 'independence' | 'demilitarized' | 'reparations' | 'plebiscite';
+export type TerritorialPeaceTerm = 'annexation' | 'restitution' | 'autonomy' | 'independence' | 'demilitarized' | 'temporary-occupation' | 'reparations' | 'plebiscite';
 export type TerritorialPeaceStatus = 'draft' | 'signed';
 
 export type TerritorialPeaceClause = {
@@ -168,14 +168,18 @@ export function addTerritorialPeaceClause(
     type,
     locationId,
     fromEntityId: type === 'restitution' ? settlement.leaderId : settlement.opponentId,
-    beneficiaryId: beneficiaryId ?? (type === 'annexation' ? settlement.leaderId : type === 'restitution' ? settlement.opponentId : undefined),
-    value: type === 'reparations' ? clamp(options.value ?? 8, 2, 25) : undefined,
+    beneficiaryId: beneficiaryId ?? (type === 'annexation' || type === 'temporary-occupation' ? settlement.leaderId : type === 'restitution' ? settlement.opponentId : undefined),
+    value: type === 'reparations' ? clamp(options.value ?? 8, 2, 25) : type === 'temporary-occupation' ? clamp(options.value ?? 365, 90, 1825) : undefined,
     result,
-    note: type === 'plebiscite' ? `Consulta política abstrata: ${result === 'approved' ? 'mudança aprovada' : 'mudança rejeitada'}.` : 'Cláusula territorial negociada na conferência pós-guerra.',
+    note: type === 'plebiscite'
+      ? `Consulta política abstrata: ${result === 'approved' ? 'mudança aprovada' : 'mudança rejeitada'}.`
+      : type === 'temporary-occupation'
+        ? `Ocupação temporária por ${Math.round(clamp(options.value ?? 365, 90, 1825))} dias; soberania formal permanece com o Estado derrotado.`
+        : 'Cláusula territorial negociada na conferência pós-guerra.',
   };
   const next = { ...settlement, clauses: [...settlement.clauses, clause] };
   publish({ ...state, settlements: state.settlements.map((item) => item.id === settlement.id ? next : item) });
-  return { accepted: true, clause, message: type === 'plebiscite' ? clause.note : 'Cláusula adicionada ao tratado territorial.' };
+  return { accepted: true, clause, message: type === 'plebiscite' || type === 'temporary-occupation' ? clause.note : 'Cláusula adicionada ao tratado territorial.' };
 }
 
 function mutateRelation(simulation: SimulationState, a: string, b: string, scoreDelta: number, trustDelta: number, memory: string) {
@@ -201,7 +205,8 @@ export function signTerritorialSettlement(settlementId: string, war: War, simula
       const payer = nextSimulation.entities[settlement.opponentId];
       const receiver = nextSimulation.entities[settlement.leaderId];
       const value = clause.value ?? 8;
-      if (payer && receiver) nextSimulation = { ...nextSimulation, entities: { ...nextSimulation.entities, [payer.id]: { ...payer, treasuryIndex: clamp(payer.treasuryIndex - value) }, [receiver.id]: { ...receiver, treasuryIndex: clamp(receiver.treasuryIndex + value * .75) } } };
+      const initialInstallment = value * .25;
+      if (payer && receiver) nextSimulation = { ...nextSimulation, entities: { ...nextSimulation.entities, [payer.id]: { ...payer, treasuryIndex: clamp(payer.treasuryIndex - initialInstallment) }, [receiver.id]: { ...receiver, treasuryIndex: clamp(receiver.treasuryIndex + initialInstallment * .92) } } };
       continue;
     }
     if (!clause.locationId) continue;
@@ -215,6 +220,8 @@ export function signTerritorialSettlement(settlementId: string, war: War, simula
     if (!beneficiary) continue;
     if (clause.type === 'autonomy') {
       occupations[clause.locationId] = { ...current, ownerId: settlement.opponentId, controllerId: beneficiary, warId: settlement.id, progress: 100, contested: false, updatedAt: simulation.date };
+    } else if (clause.type === 'temporary-occupation') {
+      occupations[clause.locationId] = { ...current, ownerId: settlement.opponentId, controllerId: settlement.leaderId, warId: settlement.id, progress: 100, contested: false, updatedAt: simulation.date };
     } else {
       occupations[clause.locationId] = { ...current, ownerId: beneficiary, controllerId: beneficiary, warId: settlement.id, progress: 0, contested: false, updatedAt: simulation.date };
     }
