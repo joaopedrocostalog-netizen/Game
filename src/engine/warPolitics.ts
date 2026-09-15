@@ -259,7 +259,8 @@ export function processWarPolitics(simulation: SimulationState, warState: WarSta
       if (targetId !== simulation.playerEntityId && canAiAcceptArmistice(targetId, war, profiles)) {
         offer.status = 'accepted';
         nextWarState = endWarAsArmistice(nextWarState, war.id);
-        events = [{ id: `armistice-event-${war.id}-${simulation.elapsedDays}`, date: simulation.date, entityId, category: 'diplomacy', title: 'Armistício negociado', text: 'Pressões políticas internas em ambos os lados abriram caminho para uma suspensão negociada das hostilidades.' }, ...events].slice(0, 50);
+        const armisticeEvent: WorldEvent = { id: `armistice-event-${war.id}-${simulation.elapsedDays}`, date: simulation.date, entityId, category: 'diplomacy', title: 'Armistício negociado', text: 'Pressões políticas internas em ambos os lados abriram caminho para uma suspensão negociada das hostilidades.' };
+        events = [armisticeEvent, ...events].slice(0, 50);
       }
       offers = [offer, ...offers].slice(0, 50);
       changed = true;
