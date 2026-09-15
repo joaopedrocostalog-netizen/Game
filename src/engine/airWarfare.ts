@@ -1,9 +1,10 @@
 import { militaryIndustryFor } from './militaryIndustry';
 import { airIndustrialSupport } from './airIndustry';
 import { airDoctrineMissionModifier, airDoctrineSupport } from './airDoctrine';
+import { airOperationalReach, processAirBaseNetwork } from './airBaseNetwork';
 import { airCampaignState, type AirCampaignState, type AirFormation } from './airCampaign';
 import type { SimulationState } from './simulation';
-import type { WarState } from './war';
+import type { War, WarState } from './war';
 
 export type AirEngagementOutcome = 'decisive' | 'advantage' | 'inconclusive';
 export type AirBaseCondition = 'operational' | 'strained' | 'damaged' | 'critical';
@@ -68,7 +69,16 @@ function deterministic(seed: string) {
   for (const char of seed) h = Math.imul(h ^ char.charCodeAt(0), 16777619);
   return .9 + (Math.abs(h >>> 0) % 21) / 100;
 }
-function combatFactor(formation: AirFormation, simulation: SimulationState) {
+function operationalFactor(formation: AirFormation, war: War, simulation: SimulationState) {
+  if (!war.fronts.length) return 1;
+  let best = 0;
+  for (const front of war.fronts) {
+    const reach = airOperationalReach(formation, front.locationId, simulation);
+    if (reach.reachable) best = Math.max(best, reach.factor);
+  }
+  return best;
+}
+function combatFactor(formation: AirFormation, simulation: SimulationState, reachFactor = 1) {
   const mission = formation.mission === 'air-superiority' ? 1.18
     : formation.mission === 'reconnaissance' ? .78
       : formation.mission === 'ground-support' ? .92
@@ -82,7 +92,7 @@ function combatFactor(formation: AirFormation, simulation: SimulationState) {
   const pilotQuality = .9 + specialized.pilotTraining / 600;
   const doctrinalFit = airDoctrineMissionModifier(formation.entityId, formation.mission, simulation);
   const coordination = .9 + doctrine.combatCoordination / 650;
-  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality * doctrinalFit * coordination;
+  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality * doctrinalFit * coordination * reachFactor;
 }
 function airDefenseFor(entityId: string, simulation: SimulationState) {
   const runtime = simulation.entities[entityId];
@@ -107,8 +117,11 @@ function ensureBases(formations: AirFormation[], simulation: SimulationState, ex
   }
   return bases;
 }
-function activeFormations(formations: AirFormation[], ids: Set<string>) {
-  return formations.filter((item) => ids.has(item.entityId) && item.mission !== 'reserve' && item.mission !== 'air-transport' && item.strength > 3 && item.readiness > 8);
+function activeFormations(formations: AirFormation[], ids: Set<string>, war: War, simulation: SimulationState) {
+  return formations.filter((item) => {
+    if (!ids.has(item.entityId) || item.mission === 'reserve' || item.mission === 'air-transport' || item.strength <= 3 || item.readiness <= 8) return false;
+    return operationalFactor(item, war, simulation) > 0;
+  });
 }
 function distributeLosses(formations: AirFormation[], participants: AirFormation[], losses: number, defensePressure: number, simulation: SimulationState) {
   if (!participants.length || losses <= 0) return formations;
@@ -130,6 +143,7 @@ function distributeLosses(formations: AirFormation[], participants: AirFormation
 }
 
 export function processAirWarfare(simulation: SimulationState, warState: WarState) {
+  processAirBaseNetwork(simulation);
   const warfare = rootState();
   const campaign = airCampaignState();
   if (!campaign.formations.length) return { changed: false };
@@ -143,14 +157,14 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
     if (war.status !== 'active') continue;
     const last = lastEngagementByWar[war.id] ?? -9999;
     if (simulation.elapsedDays - last < 10) continue;
-    const attackers = activeFormations(formations, new Set(war.attackers));
-    const defenders = activeFormations(formations, new Set(war.defenders));
+    const attackers = activeFormations(formations, new Set(war.attackers), war, simulation);
+    const defenders = activeFormations(formations, new Set(war.defenders), war, simulation);
     if (!attackers.length || !defenders.length) continue;
 
     const attackerDefense = defenders.reduce((sum, item) => sum + airDefenseFor(item.entityId, simulation), 0) / defenders.length;
     const defenderDefense = attackers.reduce((sum, item) => sum + airDefenseFor(item.entityId, simulation), 0) / attackers.length;
-    const attackPower = attackers.reduce((sum, item) => sum + combatFactor(item, simulation), 0) * deterministic(`${war.id}:air:a:${simulation.elapsedDays}`);
-    const defendPower = defenders.reduce((sum, item) => sum + combatFactor(item, simulation), 0) * deterministic(`${war.id}:air:d:${simulation.elapsedDays}`);
+    const attackPower = attackers.reduce((sum, item) => sum + combatFactor(item, simulation, operationalFactor(item, war, simulation)), 0) * deterministic(`${war.id}:air:a:${simulation.elapsedDays}`);
+    const defendPower = defenders.reduce((sum, item) => sum + combatFactor(item, simulation, operationalFactor(item, war, simulation)), 0) * deterministic(`${war.id}:air:d:${simulation.elapsedDays}`);
     const total = Math.max(1, attackPower + defendPower);
     const shareA = attackPower / total;
     const attackerLosses = clamp((.7 + (1 - shareA) * 3.3 + attackerDefense * .012) * deterministic(`${war.id}:loss:a:${simulation.elapsedDays}`), .4, 8);
@@ -185,7 +199,7 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
       const key = `${target.entityId}:${target.baseLocationId}`;
       const base = bases[key];
       if (!base) continue;
-      const pressure = combatFactor(formation, simulation) * .055 * (1 - base.airDefense / 160);
+      const pressure = combatFactor(formation, simulation, operationalFactor(formation, war, simulation)) * .055 * (1 - base.airDefense / 160);
       bases[key] = { ...base, damage: clamp(base.damage + pressure), condition: baseCondition(clamp(base.damage + pressure)) };
     }
   }
