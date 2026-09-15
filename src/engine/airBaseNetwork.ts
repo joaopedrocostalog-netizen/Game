@@ -39,6 +39,10 @@ type Root = typeof globalThis & {
   __WORLD_STATE_AIR_BASE_NETWORK__?: AirBaseNetworkState;
   __WORLD_STATE_AIR_CAMPAIGN__?: AirCampaignState;
   __WORLD_STATE_AIR_WARFARE__?: { bases?: Record<string, { damage: number }> };
+  __WORLD_STATE_AIRFIELD_INFRASTRUCTURE__?: {
+    controlOverrides?: Record<string, string>;
+    abandonedKeys?: Record<string, true>;
+  };
 };
 
 function clamp(value: number, min = 0, max = 100) { return Math.min(max, Math.max(min, value)); }
@@ -101,28 +105,33 @@ function conditionFor(base: Pick<AirBaseNode, 'capacity' | 'basedFormationIds' |
 
 function ensureBases(simulation: SimulationState, formations: AirFormation[], existing: Record<string, AirBaseNode>) {
   const bases = { ...existing };
-  const warfare = (globalThis as Root).__WORLD_STATE_AIR_WARFARE__;
+  const root = globalThis as Root;
+  const warfare = root.__WORLD_STATE_AIR_WARFARE__;
+  const infrastructure = root.__WORLD_STATE_AIRFIELD_INFRASTRUCTURE__;
   for (const entityId of Object.keys(simulation.entities)) {
     const locations = locationsForEntity(entityId, simulation.date.year).filter((location) => baseCandidate(location, simulation.date.year));
     for (const location of locations) {
       const key = `${entityId}:${location.id}`;
+      const controllerOverride = infrastructure?.controlOverrides?.[location.id];
+      if (infrastructure?.abandonedKeys?.[key]) continue;
+      if (controllerOverride && controllerOverride !== entityId) continue;
       const based = formations.filter((formation) => formation.entityId === entityId && formation.baseLocationId === location.id).map((formation) => formation.id);
       const externalDamage = warfare?.bases?.[key]?.damage ?? 0;
       const previous = bases[key];
       const capacity = capacityFor(location, simulation, entityId);
-      const infrastructure = infrastructureFor(location, simulation, entityId);
+      const infrastructureValue = infrastructureFor(location, simulation, entityId);
       const runwayCondition = previous ? Math.min(previous.runwayCondition, clamp(100 - externalDamage)) : clamp(100 - externalDamage);
       const node: AirBaseNode = previous
-        ? { ...previous, capacity, infrastructure, runwayCondition, basedFormationIds: based }
+        ? { ...previous, capacity: Math.max(previous.capacity, capacity), infrastructure: Math.max(previous.infrastructure, infrastructureValue), runwayCondition, basedFormationIds: based }
         : {
             id: key,
             entityId,
             locationId: location.id,
             capacity,
-            fuel: clamp(45 + infrastructure * .45),
-            infrastructure,
+            fuel: clamp(45 + infrastructureValue * .45),
+            infrastructure: infrastructureValue,
             runwayCondition,
-            maintenanceSupport: clamp(infrastructure * .62 + airIndustrialSupport(entityId, simulation).maintenance * .38),
+            maintenanceSupport: clamp(infrastructureValue * .62 + airIndustrialSupport(entityId, simulation).maintenance * .38),
             basedFormationIds: based,
             condition: 'operational',
             lastProcessedElapsedDay: simulation.elapsedDays,
