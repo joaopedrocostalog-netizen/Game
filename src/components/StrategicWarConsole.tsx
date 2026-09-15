@@ -49,7 +49,7 @@ type Props = {
   warState: WarState;
   armyState: ArmyState;
   territorialControl: TerritorialControlState;
-  onSimulationStateChange: (state: SimulationState) => void;
+  onSimulationStateChange?: (state: SimulationState) => void;
   onArmyStateChange: (state: ArmyState) => void;
   onWarStateChange: (state: WarState) => void;
   onMobilize: (level: MobilizationLevel) => void;
@@ -59,6 +59,7 @@ type Props = {
 export function StrategicWarConsole(props: Props) {
   const entity = props.entities.find((item) => item.id === props.entityId) ?? props.entities[0];
   if (!entity) return null;
+  const applySimulationState = props.onSimulationStateChange ?? ((next: SimulationState) => { Object.assign(props.simulation, next); });
   return <div className="strategic-war-wrapper">
     <GeopoliticalAlignmentPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
     <DiplomaticOrganizationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation}/>
@@ -84,7 +85,7 @@ export function StrategicWarConsole(props: Props) {
     <AirDefenseNetworkPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <AirWarfarePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState}/>
     <StrategicInfrastructurePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onArmyStateChange={props.onArmyStateChange}/>
-    <WartimeEconomyPanel entityId={props.entityId} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onSimulationStateChange={props.onSimulationStateChange} onArmyStateChange={props.onArmyStateChange}/>
+    <WartimeEconomyPanel entityId={props.entityId} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onSimulationStateChange={applySimulationState} onArmyStateChange={props.onArmyStateChange}/>
     <AmphibiousOperationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <BeachheadLogisticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} territorialControl={props.territorialControl} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <MilitaryIndustryPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange}/>
