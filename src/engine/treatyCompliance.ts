@@ -205,7 +205,8 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
         if (offending) {
           const already = !!activeViolation(record, violationId);
           record = upsertViolation(record, { id: violationId, treatyId: settlement.id, type: 'demilitarized-zone', violatorId: partyId, locationId: zone.locationId, severity: 66, description: 'Forças militares foram detectadas dentro de uma zona desmilitarizada prevista pelo tratado.' }, simulation.elapsedDays);
-          revanchism[partyId === settlement.leaderId ? settlement.opponentId : settlement.leaderId] = clamp((revanchism[partyId === settlement.leaderId ? settlement.opponentId : settlement.leaderId] ?? 0) + days * .025);
+          const counterpart = partyId === settlement.leaderId ? settlement.opponentId : settlement.leaderId;
+          revanchism[counterpart] = clamp((revanchism[counterpart] ?? 0) + days * .025);
           if (!already) {
             events = [{ id: `treaty-dmz-${settlement.id}-${zone.locationId}-${partyId}-${simulation.elapsedDays}`, date: simulation.date, entityId: partyId, category: 'diplomacy', title: 'Violação de zona desmilitarizada', text: 'A presença de forças militares numa região restringida pelo tratado abriu uma disputa formal de cumprimento.' }, ...events].slice(0, 50);
             nextSimulation = mutateRelation(nextSimulation, settlement.leaderId, settlement.opponentId, -9, -12, 10, 'Violação de zona desmilitarizada no tratado de paz.');
@@ -238,7 +239,7 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
       return { ...schedule, paid, installments: schedule.installments + 1, completed: paid >= schedule.total - .05, lastPaymentElapsedDay: simulation.elapsedDays };
     });
 
-    let occupations = record.occupations.map((schedule) => ({ ...schedule }));
+    const occupations = record.occupations.map((schedule) => ({ ...schedule }));
     for (let i = 0; i < occupations.length; i += 1) {
       const schedule = occupations[i];
       if (schedule.released || simulation.elapsedDays < schedule.expiresAtElapsedDay) continue;
@@ -287,7 +288,17 @@ export function processTreatyCompliance(simulation: SimulationState, armyState: 
 }
 
 export function complianceRecordsForEntity(entityId: string) {
-  return Object.values(rootState().records).filter((record) => record.leaderId === entityId || record.opponentId === entityId || record.guarantorIds.includes(entityId)).map((record) => ({ ...record, guarantorIds: [...record.guarantorIds], reparations: record.reparations.map((item) => ({ ...item })), occupations: record.occupations.map((item) => ({ ...item })), violations: record.violations.map((item) => ({ ...item })), crises: record.crises.map((item) => ({ ...item, claimantIds: [...item.claimantIds] }), revanchism: { ...record.revanchism } }));
+  return Object.values(rootState().records)
+    .filter((record) => record.leaderId === entityId || record.opponentId === entityId || record.guarantorIds.includes(entityId))
+    .map((record) => ({
+      ...record,
+      guarantorIds: [...record.guarantorIds],
+      reparations: record.reparations.map((item) => ({ ...item })),
+      occupations: record.occupations.map((item) => ({ ...item })),
+      violations: record.violations.map((item) => ({ ...item })),
+      crises: record.crises.map((item) => ({ ...item, claimantIds: [...item.claimantIds] })),
+      revanchism: { ...record.revanchism },
+    }));
 }
 
 export function openTreatyCrisesFor(entityId: string) {
