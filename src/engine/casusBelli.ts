@@ -2,9 +2,10 @@ import { locationsForEntity, type ResolvedLocation } from '../data/territories';
 import type { ScenarioEntity } from '../data/scenarios';
 import type { SimulationState, WorldEvent } from './simulation';
 import { activeTruceBetween, claimsForEntity } from './peace';
+import { treatyViolationCrisisBetween } from './treatyEnforcement';
 import type { WarGoal } from './war';
 
-export type CasusBelliType = 'territorial_claim' | 'border_dispute' | 'retaliation' | 'trade_dispute' | 'independence' | 'prestige' | 'unjustified';
+export type CasusBelliType = 'territorial_claim' | 'border_dispute' | 'retaliation' | 'trade_dispute' | 'independence' | 'prestige' | 'treaty_violation' | 'unjustified';
 
 export type CasusBelliOption = {
   id: string;
@@ -94,6 +95,9 @@ export function casusBelliOptions(attacker: ScenarioEntity, target: ScenarioEnti
   const tradeDispute = (relation?.tradeInterest ?? 0) >= 58 && (relation?.score ?? 0) < 25;
   const dependent = /col[oô]nia|vassal|depend|tribut|protetor/i.test(`${attacker.type} ${attacker.government}`);
   const truce = activeTruceBetween(attacker.id, target.id, simulation.elapsedDays);
+  const treatyCrisis = treatyViolationCrisisBetween(attacker.id, target.id);
+  const treatyLegitimacy = treatyCrisis ? clamp(58 + treatyCrisis.severity * .38) : 0;
+  const severeTreatyBreach = (treatyCrisis?.severity ?? 0) >= 82;
   const truceReason = truce ? 'Existe uma trégua em vigor entre as duas entidades.' : '';
 
   const options: CasusBelliOption[] = [
@@ -162,6 +166,23 @@ export function casusBelliOptions(attacker: ScenarioEntity, target: ScenarioEnti
       allowedGoals: ['independence'],
       available: dependent && !truce,
       reason: truceReason || (dependent ? 'O tipo institucional da entidade permite um objetivo de emancipação nesta abstração.' : 'A entidade não está marcada como dependência, colônia, vassalo ou estrutura equivalente.'),
+    },
+    {
+      id: `treaty-${attacker.id}-${target.id}`,
+      type: 'treaty_violation',
+      label: 'Violação de tratado',
+      description: 'Exigir cumprimento de um acordo de paz após uma violação grave, documentada e não resolvida.',
+      legitimacy: treatyLegitimacy,
+      stabilityCost: treatyCrisis ? Math.max(.8, 2.8 - treatyCrisis.severity * .02) : 5,
+      diplomaticCost: treatyCrisis ? Math.max(3, 12 - treatyCrisis.severity * .08) : 18,
+      preparationDays: days(treatyCrisis?.severity && treatyCrisis.severity >= 80 ? 12 : 24, simulation.date.year),
+      allowedGoals: ['reparations', 'defense', 'territory'],
+      available: !!treatyCrisis && (!truce || severeTreatyBreach),
+      reason: treatyCrisis
+        ? truce && !severeTreatyBreach
+          ? `A violação está documentada, mas a trégua ainda bloqueia uma escalada militar. Gravidade atual: ${treatyCrisis.severity.toFixed(0)}/100.`
+          : `Crise formal de cumprimento registrada com gravidade ${treatyCrisis.severity.toFixed(0)}/100. ${severeTreatyBreach && truce ? 'A gravidade excepcional permite romper a trégua, com custo político residual.' : 'A justificativa possui base diplomática documentada.'}`
+        : 'Não existe uma crise formal de cumprimento contra este alvo.',
     },
     {
       id: `prestige-${attacker.id}-${target.id}`,
