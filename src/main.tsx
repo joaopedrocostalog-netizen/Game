@@ -16,6 +16,7 @@ import { resetTerritorialPeace } from './engine/territorialPeace';
 import { resetTreatyCompliance } from './engine/treatyCompliance';
 import { resetTreatyEnforcement } from './engine/treatyEnforcement';
 import { resetMultilateralSanctions } from './engine/multilateralSanctions';
+import { resetSanctionsEvasion } from './engine/sanctionsEvasion';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
@@ -115,6 +116,7 @@ function App() {
     resetTreatyCompliance();
     resetTreatyEnforcement();
     resetMultilateralSanctions();
+    resetSanctionsEvasion();
     setScenarioId(next.id); setSelectedId(next.entities[0].id); setMapSelection(null); setSimulation(makeSimulation(next.year, next.entities)); setWarState(createInitialWarState()); setArmyState(nextArmy); setTerritorialControl(nextControl); setSpeed(0);
     setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'Locations históricas já podem representar entidades do período; as fronteiras completas continuam sendo expandidas sem reutilizar limites modernos.'}`);
   }
