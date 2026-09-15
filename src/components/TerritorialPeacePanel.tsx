@@ -33,6 +33,7 @@ const termLabels: Record<TerritorialPeaceTerm, string> = {
   autonomy: 'Autonomia sob nova autoridade local',
   independence: 'Reconhecimento de independência',
   demilitarized: 'Zona desmilitarizada',
+  'temporary-occupation': 'Ocupação temporária',
   reparations: 'Reparações econômicas',
   plebiscite: 'Consulta política / plebiscito abstrato',
 };
@@ -43,7 +44,8 @@ function clauseSummary(type: TerritorialPeaceTerm) {
   if (type === 'autonomy') return 'Mantém soberania formal do Estado de origem, mas entrega o controle à entidade emergente.';
   if (type === 'independence') return 'Transfere soberania e controle para uma entidade emergente compatível.';
   if (type === 'demilitarized') return 'Registra a região como zona desmilitarizada no tratado.';
-  if (type === 'reparations') return 'Transfere capacidade fiscal do derrotado ao vencedor.';
+  if (type === 'temporary-occupation') return 'Mantém soberania formal com o derrotado, mas concede controle temporário ao vencedor até o prazo de retirada.';
+  if (type === 'reparations') return 'Cria reparações com parcela inicial e cronograma periódico de pagamentos.';
   return 'Resolve de forma abstrata e incerta qual autoridade recebe a soberania da região.';
 }
 
@@ -53,6 +55,7 @@ export function TerritorialPeacePanel({ entityId, entities, simulation, warState
   const [locationDraft, setLocationDraft] = useState<Record<string, string>>({});
   const [beneficiaryDraft, setBeneficiaryDraft] = useState<Record<string, string>>({});
   const [reparationsDraft, setReparationsDraft] = useState<Record<string, number>>({});
+  const [occupationDurationDraft, setOccupationDurationDraft] = useState<Record<string, number>>({});
   const [message, setMessage] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -96,10 +99,11 @@ export function TerritorialPeacePanel({ entityId, entities, simulation, warState
     const war = warState.wars.find((item) => item.id === warId);
     if (!war) return;
     const type = termDraft[warId] ?? 'annexation';
+    const value = type === 'temporary-occupation' ? occupationDurationDraft[warId] ?? 365 : reparationsDraft[warId] ?? 8;
     const result = addTerritorialPeaceClause(settlementId, war, type, simulation, territorialControl, {
       locationId: type === 'reparations' ? undefined : locationDraft[warId],
       beneficiaryId: beneficiaryDraft[warId],
-      value: reparationsDraft[warId] ?? 8,
+      value,
     });
     setMessage((current) => ({ ...current, [warId]: result.message }));
     setRevision((value) => value + 1);
@@ -152,7 +156,8 @@ export function TerritorialPeacePanel({ entityId, entities, simulation, warState
             <label><span>Cláusula</span><select value={type} onChange={(event) => setTermDraft((current) => ({ ...current, [war.id]: event.target.value as TerritorialPeaceTerm }))}>{Object.entries(termLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             {type !== 'reparations' && <label><span>Região</span><select value={locationId} onChange={(event) => setLocationDraft((current) => ({ ...current, [war.id]: event.target.value }))}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>}
             {needsBeneficiary && <label><span>Beneficiário</span><select value={beneficiaryDraft[war.id] ?? ''} onChange={(event) => setBeneficiaryDraft((current) => ({ ...current, [war.id]: event.target.value }))}><option value="">Selecionar…</option>{beneficiaries.map((id) => <option key={id} value={id}>{names[id] ?? id}</option>)}{type === 'plebiscite' && !beneficiaries.includes(settlement.leaderId) && <option value={settlement.leaderId}>{names[settlement.leaderId] ?? settlement.leaderId}</option>}</select></label>}
-            {type === 'reparations' && <label><span>Pressão fiscal</span><input type="number" min={2} max={25} value={reparationsDraft[war.id] ?? 8} onChange={(event) => setReparationsDraft((current) => ({ ...current, [war.id]: Number(event.target.value) }))}/></label>}
+            {type === 'reparations' && <label><span>Pressão fiscal total</span><input type="number" min={2} max={25} value={reparationsDraft[war.id] ?? 8} onChange={(event) => setReparationsDraft((current) => ({ ...current, [war.id]: Number(event.target.value) }))}/></label>}
+            {type === 'temporary-occupation' && <label><span>Prazo da ocupação (dias)</span><input type="number" min={90} max={1825} value={occupationDurationDraft[war.id] ?? 365} onChange={(event) => setOccupationDurationDraft((current) => ({ ...current, [war.id]: Number(event.target.value) }))}/></label>}
             <p>{clauseSummary(type)}</p>
             <button onClick={() => addClause(war.id, settlement.id)} disabled={(type !== 'reparations' && !locationId) || (needsBeneficiary && !beneficiaryDraft[war.id])}>Adicionar cláusula</button>
           </div>}
@@ -161,7 +166,7 @@ export function TerritorialPeacePanel({ entityId, entities, simulation, warState
             {settlement.clauses.length === 0 ? <div className="territorial-peace-empty">Nenhuma cláusula adicionada.</div> : settlement.clauses.map((clause) => <div key={clause.id}>
               <strong>{termLabels[clause.type]}</strong>
               <span>{clause.locationId ? locationMap.get(clause.locationId) ?? clause.locationId : 'Cláusula econômica'}{clause.beneficiaryId ? ` → ${names[clause.beneficiaryId] ?? clause.beneficiaryId}` : ''}</span>
-              <small>{clause.type === 'reparations' ? `Pressão fiscal ${clause.value?.toFixed(0) ?? '—'}` : clause.note}</small>
+              <small>{clause.type === 'reparations' ? `Pressão fiscal total ${clause.value?.toFixed(0) ?? '—'} • 25% na assinatura + parcelas posteriores` : clause.note}</small>
             </div>)}
           </div>
 
@@ -171,6 +176,6 @@ export function TerritorialPeacePanel({ entityId, entities, simulation, warState
       </article>;
     })}
 
-    <small className="territorial-peace-note">A conferência territorial altera o estado político da campanha apenas quando o tratado é assinado. Anexações exigem controle militar relevante ou vitória decisiva; autonomia preserva soberania formal do Estado de origem; independência exige uma entidade emergente compatível; plebiscitos são abstrações políticas incertas, não pesquisas históricas exatas.</small>
+    <small className="territorial-peace-note">A conferência territorial altera o estado político da campanha apenas quando o tratado é assinado. Anexações exigem controle militar relevante ou vitória decisiva; autonomia preserva soberania formal do Estado de origem; independência exige uma entidade emergente compatível; ocupações temporárias expiram e passam a ser fiscalizadas; plebiscitos são abstrações políticas incertas, não pesquisas históricas exatas.</small>
   </section>;
 }
