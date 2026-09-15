@@ -12,6 +12,10 @@ import { applyBattleConsequences, createInitialArmyState, ensureEntityForces, si
 import { createInitialTerritorialControlState, type TerritorialControlState } from './engine/territorialControl';
 import { resetCivilConflict } from './engine/civilConflict';
 import { emergentScenarioEntities, resetEmergentStatehood } from './engine/emergentStatehood';
+import { resetTerritorialPeace } from './engine/territorialPeace';
+import { resetTreatyCompliance } from './engine/treatyCompliance';
+import { resetTreatyEnforcement } from './engine/treatyEnforcement';
+import { resetMultilateralSanctions } from './engine/multilateralSanctions';
 import './styles.css';
 
 type MapMode = 'Político' | 'Economia' | 'População' | 'Militar' | 'Tecnologia';
@@ -107,6 +111,10 @@ function App() {
     const nextArmy = createInitialArmyState();
     resetCivilConflict();
     resetEmergentStatehood();
+    resetTerritorialPeace();
+    resetTreatyCompliance();
+    resetTreatyEnforcement();
+    resetMultilateralSanctions();
     setScenarioId(next.id); setSelectedId(next.entities[0].id); setMapSelection(null); setSimulation(makeSimulation(next.year, next.entities)); setWarState(createInitialWarState()); setArmyState(nextArmy); setTerritorialControl(nextControl); setSpeed(0);
     setAdvisorText(`Cenário ${next.label} carregado. ${next.historicalLayerReady ? 'A geografia política contemporânea está disponível.' : 'Locations históricas já podem representar entidades do período; as fronteiras completas continuam sendo expandidas sem reutilizar limites modernos.'}`);
   }
