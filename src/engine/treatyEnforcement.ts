@@ -1,5 +1,5 @@
 import { pairKey, type SimulationState, type WorldEvent } from './simulation';
-import { complianceRecordsForEntity, openTreatyCrisesFor, type TreatyEnforcementCrisis } from './treatyCompliance';
+import { openTreatyCrisesFor, type TreatyEnforcementCrisis } from './treatyCompliance';
 
 export type EnforcementActionType = 'ultimatum' | 'sanctions' | 'emergency-conference' | 'negotiated-withdrawal' | 'guarantee-suspension';
 export type EnforcementActionStatus = 'active' | 'accepted' | 'rejected' | 'expired' | 'resolved';
@@ -39,7 +39,8 @@ export function resetTreatyEnforcement() { publish({ actions: [], lastAiReviewEl
 export function treatyEnforcementState() { return { ...rootState(), actions: rootState().actions.map((item) => ({ ...item })) }; }
 
 function event(simulation: SimulationState, actorId: string, title: string, text: string): WorldEvent {
-  return { id: `treaty-enforcement-${actorId}-${simulation.elapsedDays}-${Math.random().toString(36).slice(2, 7)}`, date: simulation.date, entityId: actorId, category: 'diplomacy', title, text };
+  const stableTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return { id: `treaty-enforcement-${actorId}-${simulation.elapsedDays}-${stableTitle}`, date: simulation.date, entityId: actorId, category: 'diplomacy', title, text };
 }
 function mutateRelation(simulation: SimulationState, actorId: string, targetId: string, score: number, trust: number, threat: number, memory: string) {
   const key = pairKey(actorId, targetId);
@@ -93,7 +94,7 @@ export function respondToTreatyUltimatum(targetId: string, actionId: string, acc
 export function processTreatyEnforcement(simulation: SimulationState) {
   const state = rootState();
   if (simulation.elapsedDays <= state.lastAiReviewElapsedDay) return { simulation, changed: false };
-  let actions = state.actions.map((item) => ({ ...item }));
+  let actions: TreatyEnforcementAction[] = state.actions.map((item) => ({ ...item }));
   let nextSimulation = simulation;
   let changed = false;
 
@@ -110,7 +111,6 @@ export function processTreatyEnforcement(simulation: SimulationState) {
     }
   }
 
-  // IA: reclamantes não controlados podem iniciar escalada limitada em crises graves.
   if (simulation.elapsedDays - state.lastAiReviewElapsedDay >= 30) {
     const allEntityIds = Object.keys(simulation.entities);
     for (const claimantId of allEntityIds.filter((id) => id !== simulation.playerEntityId)) {
@@ -120,7 +120,8 @@ export function processTreatyEnforcement(simulation: SimulationState) {
       if (already) continue;
       const type: EnforcementActionType = crisis.severity >= 82 ? 'ultimatum' : 'emergency-conference';
       const pressure = clamp(crisis.severity * .8);
-      actions = [{ id: `enforcement-ai-${crisis.id}-${claimantId}-${simulation.elapsedDays}`, treatyId: crisis.treatyId, crisisId: crisis.id, actorId: claimantId, targetId: crisis.violatorId, type, status: 'active', createdAtElapsedDay: simulation.elapsedDays, deadlineElapsedDay: type === 'ultimatum' ? simulation.elapsedDays + 21 : undefined, pressure, note: type === 'ultimatum' ? 'Ultimato automático da IA' : 'Conferência emergencial convocada pela IA' }, ...actions].slice(0, 80);
+      const aiAction: TreatyEnforcementAction = { id: `enforcement-ai-${crisis.id}-${claimantId}-${simulation.elapsedDays}`, treatyId: crisis.treatyId, crisisId: crisis.id, actorId: claimantId, targetId: crisis.violatorId, type, status: 'active', createdAtElapsedDay: simulation.elapsedDays, deadlineElapsedDay: type === 'ultimatum' ? simulation.elapsedDays + 21 : undefined, pressure, note: type === 'ultimatum' ? 'Ultimato automático da IA' : 'Conferência emergencial convocada pela IA' };
+      actions = [aiAction, ...actions].slice(0, 80);
       nextSimulation = mutateRelation(nextSimulation, claimantId, crisis.violatorId, -4, -5, 5, 'Escalou diplomaticamente uma crise por violação de tratado.');
       changed = true;
       break;
