@@ -2,6 +2,11 @@ import { militaryIndustryFor } from './militaryIndustry';
 import { airIndustrialSupport } from './airIndustry';
 import { airDoctrineMissionModifier, airDoctrineSupport } from './airDoctrine';
 import { airOperationalReach, processAirBaseNetwork } from './airBaseNetwork';
+import {
+  airBaseDefenseModifier,
+  airDetectionCombatModifier,
+  processAirDefenseNetwork,
+} from './airDefenseNetwork';
 import { airCampaignState, type AirCampaignState, type AirFormation } from './airCampaign';
 import type { SimulationState } from './simulation';
 import type { War, WarState } from './war';
@@ -82,7 +87,7 @@ function operationalFactor(formation: AirFormation, war: War, simulation: Simula
   }
   return best;
 }
-function combatFactor(formation: AirFormation, simulation: SimulationState, reachFactor = 1) {
+function combatFactor(formation: AirFormation, simulation: SimulationState, reachFactor = 1, detectionFactor = 1) {
   const mission = formation.mission === 'air-superiority' ? 1.18
     : formation.mission === 'reconnaissance' ? .78
       : formation.mission === 'ground-support' ? .92
@@ -96,7 +101,7 @@ function combatFactor(formation: AirFormation, simulation: SimulationState, reac
   const pilotQuality = .9 + specialized.pilotTraining / 600;
   const doctrinalFit = airDoctrineMissionModifier(formation.entityId, formation.mission, simulation);
   const coordination = .9 + doctrine.combatCoordination / 650;
-  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality * doctrinalFit * coordination * reachFactor;
+  return formation.strength * formation.readiness / 100 * formation.supply / 100 * (0.76 + formation.experience / 230) * mission * modernization * pilotQuality * doctrinalFit * coordination * reachFactor * detectionFactor;
 }
 function airDefenseFor(entityId: string, simulation: SimulationState) {
   const runtime = simulation.entities[entityId];
@@ -148,6 +153,7 @@ function distributeLosses(formations: AirFormation[], participants: AirFormation
 
 export function processAirWarfare(simulation: SimulationState, warState: WarState) {
   processAirBaseNetwork(simulation);
+  processAirDefenseNetwork(simulation, warState);
   const warfare = rootState();
   const campaign = airCampaignState();
   if (!campaign.formations.length) return { changed: false };
@@ -165,10 +171,22 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
     const defenders = activeFormations(formations, new Set(war.defenders), war, simulation);
     if (!attackers.length || !defenders.length) continue;
 
-    const attackerDefense = defenders.reduce((sum, item) => sum + airDefenseFor(item.entityId, simulation), 0) / defenders.length;
-    const defenderDefense = attackers.reduce((sum, item) => sum + airDefenseFor(item.entityId, simulation), 0) / attackers.length;
-    const attackPower = attackers.reduce((sum, item) => sum + combatFactor(item, simulation, operationalFactor(item, war, simulation)), 0) * deterministic(`${war.id}:air:a:${simulation.elapsedDays}`);
-    const defendPower = defenders.reduce((sum, item) => sum + combatFactor(item, simulation, operationalFactor(item, war, simulation)), 0) * deterministic(`${war.id}:air:d:${simulation.elapsedDays}`);
+    const attackerEnemy = defenders[0].entityId;
+    const defenderEnemy = attackers[0].entityId;
+    const attackerDefense = defenders.reduce((sum, item) => sum + Math.max(airDefenseFor(item.entityId, simulation), airBaseDefenseModifier(item.entityId, defenderEnemy, simulation)), 0) / defenders.length;
+    const defenderDefense = attackers.reduce((sum, item) => sum + Math.max(airDefenseFor(item.entityId, simulation), airBaseDefenseModifier(item.entityId, attackerEnemy, simulation)), 0) / attackers.length;
+    const attackPower = attackers.reduce((sum, item) => sum + combatFactor(
+      item,
+      simulation,
+      operationalFactor(item, war, simulation),
+      airDetectionCombatModifier(item.entityId, attackerEnemy, simulation),
+    ), 0) * deterministic(`${war.id}:air:a:${simulation.elapsedDays}`);
+    const defendPower = defenders.reduce((sum, item) => sum + combatFactor(
+      item,
+      simulation,
+      operationalFactor(item, war, simulation),
+      airDetectionCombatModifier(item.entityId, defenderEnemy, simulation),
+    ), 0) * deterministic(`${war.id}:air:d:${simulation.elapsedDays}`);
     const total = Math.max(1, attackPower + defendPower);
     const shareA = attackPower / total;
     const attackerLosses = clamp((.7 + (1 - shareA) * 3.3 + attackerDefense * .012) * deterministic(`${war.id}:loss:a:${simulation.elapsedDays}`), .4, 8);
@@ -203,7 +221,9 @@ export function processAirWarfare(simulation: SimulationState, warState: WarStat
       const key = `${target.entityId}:${target.baseLocationId}`;
       const base = bases[key];
       if (!base) continue;
-      const pressure = combatFactor(formation, simulation, operationalFactor(formation, war, simulation)) * .055 * (1 - base.airDefense / 160);
+      const integratedDefense = Math.max(base.airDefense, airBaseDefenseModifier(target.entityId, formation.entityId, simulation));
+      const attackDetection = airDetectionCombatModifier(formation.entityId, target.entityId, simulation);
+      const pressure = combatFactor(formation, simulation, operationalFactor(formation, war, simulation), attackDetection) * .055 * (1 - integratedDefense / 160);
       bases[key] = { ...base, damage: clamp(base.damage + pressure), condition: baseCondition(clamp(base.damage + pressure)) };
     }
   }
