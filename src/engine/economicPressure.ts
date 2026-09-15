@@ -1,4 +1,5 @@
 import { pairKey, type SimulationState, type WorldEvent } from './simulation';
+import { sanctionsEvasionRelief } from './sanctionsEvasion';
 import type { WarState } from './war';
 
 export type EconomicPressureAction = 'embargo' | 'sanctions' | 'route_pressure' | 'market_restriction';
@@ -116,10 +117,12 @@ export function routeMarketAccess(importerId: string, exporterId: string, simula
     pressure += measure.pressure * weight;
   }
   pressure = clamp(pressure);
-  const alternative = clamp(alternateMarketAccess(importerId, exporterId, simulation, warState) * .28, 0, 24);
-  let access = clamp(1 - pressure / 125 + alternative / 100, .08, 1);
-  if (directEmbargo) access *= .3;
-  return { access: clamp(access * 100, 5, 100) / 100, pressure, alternative, directEmbargo };
+  const adaptation = sanctionsEvasionRelief(importerId);
+  const alternative = clamp(alternateMarketAccess(importerId, exporterId, simulation, warState) * .28 + adaptation.relief * .42, 0, 42);
+  const effectivePressure = clamp(pressure - adaptation.relief * .48);
+  let access = clamp(1 - effectivePressure / 125 + alternative / 100, .08, 1);
+  if (directEmbargo) access *= clamp(.3 + adaptation.relief / 220, .3, .55);
+  return { access: clamp(access * 100, 5, 100) / 100, pressure: effectivePressure, rawPressure: pressure, alternative, evasionRelief: adaptation.relief, directEmbargo };
 }
 
 export function processEconomicPressure(simulation: SimulationState, warState: WarState) {
@@ -136,7 +139,9 @@ export function processEconomicPressure(simulation: SimulationState, warState: W
     if (!runtime) continue;
     const sanctions = imposed.filter((measure) => measure.action === 'sanctions').reduce((sum, measure) => sum + measure.pressure, 0);
     const market = imposed.filter((measure) => measure.action === 'market_restriction').reduce((sum, measure) => sum + measure.pressure, 0);
-    const drag = clamp((sanctions * .55 + market * .3) / 100, 0, 1.5);
+    const adaptation = sanctionsEvasionRelief(targetId);
+    const reliefFactor = clamp(1 - adaptation.relief / 115, .48, 1);
+    const drag = clamp((sanctions * .55 + market * .3) / 100 * reliefFactor, 0, 1.5);
     if (drag <= 0) continue;
     entities[targetId] = { ...runtime, treasuryIndex: clamp(runtime.treasuryIndex - days * drag * .012), economyIndex: clamp(runtime.economyIndex - days * drag * .004) };
     changed = true;
@@ -144,7 +149,7 @@ export function processEconomicPressure(simulation: SimulationState, warState: W
   let nextSimulation = simulation;
   if (changed) {
     const affected = [...new Set(measures.filter((measure) => measure.active).map((measure) => measure.targetId))];
-    const events: WorldEvent[] = affected.slice(0, 4).map((entityId) => ({ id: `economic-pressure-event-${entityId}-${simulation.elapsedDays}`, date: simulation.date, entityId, category: 'economy', title: 'Pressão econômica externa', text: 'Restrições comerciais e menor acesso a mercados estão pressionando o tesouro e a atividade econômica.' }));
+    const events: WorldEvent[] = affected.slice(0, 4).map((entityId) => ({ id: `economic-pressure-event-${entityId}-${simulation.elapsedDays}`, date: simulation.date, entityId, category: 'economy', title: 'Pressão econômica externa', text: sanctionsEvasionRelief(entityId).relief > 10 ? 'Restrições comerciais pressionam a economia, mas redes alternativas e substituição doméstica amortecem parte do impacto.' : 'Restrições comerciais e menor acesso a mercados estão pressionando o tesouro e a atividade econômica.' }));
     nextSimulation = { ...simulation, entities, events: [...events, ...simulation.events].slice(0, 50) };
   }
   publish({ measures, lastProcessedElapsedDay: simulation.elapsedDays });
