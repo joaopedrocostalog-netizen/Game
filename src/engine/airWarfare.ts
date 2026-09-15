@@ -73,6 +73,10 @@ function operationalFactor(formation: AirFormation, war: War, simulation: Simula
   if (!war.fronts.length) return 1;
   let best = 0;
   for (const front of war.fronts) {
+    if (!front.locationId) {
+      best = Math.max(best, 1);
+      continue;
+    }
     const reach = airOperationalReach(formation, front.locationId, simulation);
     if (reach.reachable) best = Math.max(best, reach.factor);
   }
