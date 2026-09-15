@@ -40,7 +40,7 @@ export function AirBaseNetworkPanel({ entityId, entities, simulation, warState }
   const [message, setMessage] = useState('');
   const [destinations, setDestinations] = useState<Record<string, string>>({});
   const locations = useMemo(() => Object.fromEntries(locationsForYear(simulation.date.year).map((location) => [location.id, location])), [simulation.date.year]);
-  const names = useMemo(() => Object.fromEntries(entities.map((entity) => [entity.id, entity.name])), [entities]);
+  void entities;
 
   useEffect(() => {
     const refresh = () => setRevision((value) => value + 1);
@@ -100,7 +100,11 @@ export function AirBaseNetworkPanel({ entityId, entities, simulation, warState }
       {formations.map((formation) => {
         const current = locations[formation.baseLocationId];
         const targets = bases.filter((base) => base.locationId !== formation.baseLocationId && base.condition !== 'critical');
-        const fronts = relevantWars.flatMap((war) => war.fronts.map((front) => ({ war, front, reach: airOperationalReach(formation, front.locationId, simulation) })));
+        const fronts = relevantWars.flatMap((war) => war.fronts.map((front) => ({
+          war,
+          front,
+          reach: front.locationId ? airOperationalReach(formation, front.locationId, simulation) : { reachable: true, factor: 1, distanceKm: 0, rangeKm: airRangeKm(formation, simulation), baseCondition: 'operational' as const },
+        })));
         return <article key={formation.id}>
           <div className="air-transfer-head">
             <span><b>{formation.name}</b><small>{current?.name ?? formation.baseLocationId} • alcance nominal ~{Math.round(airRangeKm(formation, simulation))} km</small></span>
@@ -108,7 +112,7 @@ export function AirBaseNetworkPanel({ entityId, entities, simulation, warState }
           </div>
           {!!fronts.length && <div className="air-reach-row">
             {fronts.slice(0, 6).map(({ war, front, reach }) => <span key={`${war.id}-${front.id}`} className={reach.reachable ? 'reachable' : 'unreachable'}>
-              <b>{front.name}</b><small>{reach.reachable ? `${Math.round(reach.distanceKm)} km • alcance disponível` : `${Math.round(reach.distanceKm)} km • fora do alcance`}</small>
+              <b>{front.name}</b><small>{!front.locationId ? 'Frente abstrata • alcance não restringido' : reach.reachable ? `${Math.round(reach.distanceKm)} km • alcance disponível` : `${Math.round(reach.distanceKm)} km • fora do alcance`}</small>
             </span>)}
           </div>}
           {!!targets.length && <div className="air-transfer-controls">
@@ -123,6 +127,6 @@ export function AirBaseNetworkPanel({ entityId, entities, simulation, warState }
     </div>}
 
     {message && <div className="air-base-message">{message}</div>}
-    <small className="air-base-note">O alcance é calculado entre a base real da formação e a localização da frente. Combustível, condição da pista, sobrecarga e distância reduzem a eficiência operacional. As capacidades são índices de jogo derivados da infraestrutura e da época, não estatísticas históricas exatas.</small>
+    <small className="air-base-note">O alcance é calculado entre a base real da formação e a localização da frente. Combustível, condição da pista, sobrecarga e distância reduzem a eficiência operacional. Frentes ainda não georreferenciadas mantêm temporariamente o comportamento abstrato anterior.</small>
   </section>;
 }
