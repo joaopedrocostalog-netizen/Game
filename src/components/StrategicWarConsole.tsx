@@ -12,6 +12,7 @@ import { AllianceCommandPanel } from './AllianceCommandPanel';
 import { PostWarConferencePanel } from './PostWarConferencePanel';
 import { TerritorialPeacePanel } from './TerritorialPeacePanel';
 import { TreatyCompliancePanel } from './TreatyCompliancePanel';
+import { TreatyEnforcementPanel } from './TreatyEnforcementPanel';
 import { PostWarDisputePanel } from './PostWarDisputePanel';
 import { GeopoliticalAlignmentPanel } from './GeopoliticalAlignmentPanel';
 import { DiplomaticOrganizationsPanel } from './DiplomaticOrganizationsPanel';
@@ -109,6 +110,7 @@ export function StrategicWarConsole(props: Props) {
     <PostWarConferencePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl}/>
     <TerritorialPeacePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} territorialControl={props.territorialControl} onSimulationStateChange={applySimulationState}/>
     <TreatyCompliancePanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} territorialControl={props.territorialControl} onSimulationStateChange={applySimulationState}/>
+    <TreatyEnforcementPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} onSimulationStateChange={applySimulationState}/>
     <WarConsole
       entityId={props.entityId}
       entities={props.entities}
