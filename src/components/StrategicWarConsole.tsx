@@ -41,6 +41,7 @@ import { StrategicInfrastructurePanel } from './StrategicInfrastructurePanel';
 import { WartimeEconomyPanel } from './WartimeEconomyPanel';
 import { NationalMoralePanel } from './NationalMoralePanel';
 import { WarPoliticsPanel } from './WarPoliticsPanel';
+import { CivilConflictPanel } from './CivilConflictPanel';
 import { MilitaryIndustryPanel } from './MilitaryIndustryPanel';
 import { WarConsole } from './WarConsole';
 
@@ -90,6 +91,7 @@ export function StrategicWarConsole(props: Props) {
     <WartimeEconomyPanel entityId={props.entityId} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onSimulationStateChange={applySimulationState} onArmyStateChange={props.onArmyStateChange}/>
     <NationalMoralePanel entityId={props.entityId} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onSimulationStateChange={applySimulationState}/>
     <WarPoliticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} armyState={props.armyState} onSimulationStateChange={applySimulationState} onWarStateChange={props.onWarStateChange} onArmyStateChange={props.onArmyStateChange}/>
+    <CivilConflictPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} warState={props.warState} armyState={props.armyState} territorialControl={props.territorialControl} onSimulationStateChange={applySimulationState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <AmphibiousOperationsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <BeachheadLogisticsPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} territorialControl={props.territorialControl} onArmyStateChange={props.onArmyStateChange} onWarStateChange={props.onWarStateChange}/>
     <MilitaryIndustryPanel entityId={props.entityId} entities={props.entities} simulation={props.simulation} armyState={props.armyState} warState={props.warState} onArmyStateChange={props.onArmyStateChange}/>
